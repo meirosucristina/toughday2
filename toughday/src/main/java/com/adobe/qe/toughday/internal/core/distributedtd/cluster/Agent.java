@@ -5,6 +5,7 @@ import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.config.PhaseParams;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.RedistributionInstructionsProcessor;
 import com.google.gson.Gson;
@@ -21,7 +22,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.URL_PREFIX;
 import static com.adobe.qe.toughday.internal.core.engine.Engine.installToughdayContentPackage;
@@ -31,7 +31,6 @@ import static spark.Spark.*;
  * Agent component for running TD distributed.
  */
 public class Agent {
-    private static final String PORT = "4567";
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
     private final ExecutorService tdExecutorService = Executors.newFixedThreadPool(1);
     private final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(1);
@@ -39,7 +38,8 @@ public class Agent {
     public enum Status {
         IDLE, /* Agent is waiting to receive tasks from the driver */
         BUILDING_CONFIG, /* Agent has received one task from the driver and it is building the TD configuration */
-        RUNNING /* Agent is running TD tests */
+        RUNNING, /* Agent is running TD tests */
+        PHASE_COMPLETED /* Agent finished executing the current phase */
     }
 
     // available routes
@@ -55,12 +55,13 @@ public class Agent {
     private Status status = Status.IDLE;
     private final Lock statusLock = new ReentrantLock();
 
+
     /**
      * Returns the http URL that the driver should use for finished the execution of the agent.
-     * @param agentItAddress : the ip address that uniquely identifies the agent in the cluster
+     * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
-    public static String getFinishPath(String agentItAddress) {
-        return URL_PREFIX + agentItAddress + ":" + PORT + FINISH_PATH;
+    public static String getFinishPath(String agentIpAddress) {
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + FINISH_PATH;
     }
 
     /**
@@ -68,7 +69,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getHeartbeatPath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" + PORT + HEARTBEAT_PATH;
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + HEARTBEAT_PATH;
     }
 
     /**
@@ -76,7 +77,7 @@ public class Agent {
      * @param agentIpAdress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getSubmissionTaskPath(String agentIpAdress) {
-        return URL_PREFIX + agentIpAdress + ":" + PORT + SUBMIT_TASK_PATH;
+        return URL_PREFIX + agentIpAdress + ":" + HttpUtils.SPARK_PORT + SUBMIT_TASK_PATH;
     }
 
     /**
@@ -84,7 +85,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getRebalancePath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" +  PORT + REBALANCE_PATH;
+        return URL_PREFIX + agentIpAddress + ":" +  HttpUtils.SPARK_PORT + REBALANCE_PATH;
     }
 
     /**
@@ -92,7 +93,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getInstallSampleContentPath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" + PORT + INSTALL_SAMPLE_CONTENT_PATH;
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + INSTALL_SAMPLE_CONTENT_PATH;
     }
 
     /**
@@ -100,7 +101,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getGetStatusPath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" + PORT + GET_STATUS_PATH;
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + GET_STATUS_PATH;
     }
 
     private Engine engine;
@@ -116,17 +117,18 @@ public class Agent {
 
     private final RedistributionInstructionsProcessor redistributionInstructionsProcessor = new RedistributionInstructionsProcessor();
 
-    public static boolean announcePhaseCompletion() {
+    public boolean announcePhaseCompletion() {
         /* the current master might be dead so we should retry this for a certain amount of time before shutting
          * down the execution.
          */
+
         HttpUtils httpUtils = new HttpUtils();
         HttpResponse response = null;
         long duration = GlobalArgs.parseDurationToSeconds("60s");
 
         while (duration > 0 && response == null) {
             response = httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, ipAddress,
-                    Driver.getPhaseFinishedByAgentPath(), HTTP_REQUEST_RETRIES);
+                    Driver.getPhaseFinishedByAgentPath("driver", HttpUtils.SVC_PORT, true), HTTP_REQUEST_RETRIES);
 
             try {
                 Thread.sleep(10 * 1000L); // try again in 10 seconds
@@ -159,7 +161,7 @@ public class Agent {
                 }
 
                 HttpResponse driverResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, String.valueOf(installed),
-                        Driver.getSampleContentAckPath(), HTTP_REQUEST_RETRIES);
+                        Driver.getSampleContentAckPath("driver", HttpUtils.SVC_PORT), HTTP_REQUEST_RETRIES);
                 if (driverResponse == null) {
                     LOG.error("Agent " + ipAddress + " could not announce the driver that Toughday sample content" +
                             " package was installed.");
@@ -196,7 +198,7 @@ public class Agent {
 
             Configuration configuration = new Configuration(yamlTask);
             this.engine = new Engine(configuration);
-            configuration.getDistributedConfig().setAgent("true");
+            this.engine.setAgent(this);
 
             tdExecutorService.submit(() ->  {
                 this.statusLock.lock();
@@ -211,8 +213,9 @@ public class Agent {
                 }
 
                 this.statusLock.lock();
-                this.status = Status.IDLE;
+                this.status = Status.PHASE_COMPLETED;
                 this.statusLock.unlock();
+
             });
 
             return "";
@@ -288,9 +291,10 @@ public class Agent {
      * first method executed.
      */
     private void register() {
+        LOG.info("Registering...");
         HttpResponse response =
                 this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, ipAddress,
-                                                Driver.getAgentRegisterPath(), HTTP_REQUEST_RETRIES);
+                        Driver.getAgentRegisterPath("driver", HttpUtils.SVC_PORT, true), HTTP_REQUEST_RETRIES);
         if (response == null) {
             System.exit(-1);
         }

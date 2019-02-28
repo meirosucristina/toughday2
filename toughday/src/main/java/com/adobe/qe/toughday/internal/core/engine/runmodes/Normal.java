@@ -181,7 +181,8 @@ public class Normal implements RunMode, Cloneable {
      * periodically, every 'interval' milliseconds.
      */
     public void schedulePeriodicTask() {
-        if (this.scheduledFuture == null) {
+        // added for testing purposes
+        if (this.engine == null) {
             return;
         }
 

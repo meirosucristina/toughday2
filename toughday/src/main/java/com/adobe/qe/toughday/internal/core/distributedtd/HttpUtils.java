@@ -4,6 +4,7 @@ import com.adobe.qe.toughday.api.annotations.labels.Nullable;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
@@ -22,9 +23,17 @@ public class HttpUtils {
     public static final String GET_METHOD = "GET";
     public static final String URL_PREFIX = "http://";
     public static final int HTTP_REQUEST_RETRIES = 3;
+    public static final String SVC_PORT = "80";
+    public static final String SPARK_PORT = "4567";
+    public static final String FORWARD_QUERY_PARAM = "?forward=";
+
+
 
     private HttpResponse sendGetRequest(String URI) {
-        HttpClient httpClient = HttpClientBuilder.create().build();
+        RequestConfig config = RequestConfig.custom()
+                .setConnectTimeout(10 * 1000)    // 5 seconds
+                .build();
+        HttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(config).build();
         HttpGet request = new HttpGet(URI);
 
         try {

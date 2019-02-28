@@ -59,7 +59,11 @@ public class GlobalArgs implements com.adobe.qe.toughday.api.core.config.GlobalA
     private boolean saveConfig = Boolean.parseBoolean(DEFAULT_SAVE_CONFIG);
     private boolean showSteps = false;
     private boolean hostValidationEnabled = true;
+    private boolean k8sRun = false;
+    private boolean k8sAgent = false;
+    private boolean k8sdriver = false;
     private String logPath;
+    private String driverIp = null;
 
     /**
      * Constructor

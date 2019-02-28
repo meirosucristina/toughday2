@@ -19,6 +19,7 @@ public class DistributedPhaseMonitor {
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(1);
     private final List<String> agentsRunningTD = new ArrayList<>();
+    private final List<String> agentsWhichCompletedCurrentPhase = new ArrayList<>();
     // key = name of the test; value = map(key = name of the agent, value = nr of tests executed)
     private Map<String, Map<String, Long>> executions = new HashMap<>();
     private Phase phase;
@@ -29,6 +30,18 @@ public class DistributedPhaseMonitor {
      */
     public boolean isPhaseExecuting() {
         return this.phase != null && !this.agentsRunningTD.isEmpty();
+    }
+
+    public List<String> getAgentsRunningTD() {
+        return this.agentsRunningTD;
+    }
+
+    public List<String> getAgentsWhichCompletedCurrentPhase() {
+        return this.agentsWhichCompletedCurrentPhase;
+    }
+
+    public void setExecutions(Map<String, Map<String, Long>> executions) {
+        this.executions = executions;
     }
 
     /**
@@ -51,6 +64,9 @@ public class DistributedPhaseMonitor {
     public void setPhase(Phase phase) {
         this.phase = phase;
         this.phase.getTestSuite().getTests().forEach(test -> executions.put(test.getName(), new HashMap<>()));
+
+        // reset agents which completed the current phase
+        this.agentsWhichCompletedCurrentPhase.clear();
     }
 
     /**
@@ -59,8 +75,16 @@ public class DistributedPhaseMonitor {
      * @param agentIdentifier : ip address that identifies the agent inside the cluster
      */
     public void registerAgentRunningTD(String agentIdentifier) {
-        this.agentsRunningTD.add(agentIdentifier);
+        if (!this.agentsRunningTD.contains(agentIdentifier)) {
+            this.agentsRunningTD.add(agentIdentifier);
+        }
 
+    }
+
+    public void addAgentWhichCompletedTheCurrentPhase(String agentIdentifier) {
+        if (!this.agentsWhichCompletedCurrentPhase.contains(agentIdentifier)) {
+            this.agentsWhichCompletedCurrentPhase.add(agentIdentifier);
+        }
     }
 
     /**
@@ -70,6 +94,11 @@ public class DistributedPhaseMonitor {
      */
     public void removeAgentFromActiveTDRunners(String agentIdentifier) {
         this.agentsRunningTD.remove(agentIdentifier);
+
+        if (agentsWhichCompletedCurrentPhase.contains(agentIdentifier)) {
+            this.agentsWhichCompletedCurrentPhase.remove(agentIdentifier);
+        }
+
         // remove agent from executions map
         this.executions.forEach((test, executionsPerAgent) -> this.executions.get(test).remove(agentIdentifier));
     }
@@ -80,7 +109,8 @@ public class DistributedPhaseMonitor {
     public boolean waitForPhaseCompletion(int retries) {
         while (retries > 0) {
             Future<?> waitPhaseCompletion = executorService.submit(() -> {
-                while (!this.agentsRunningTD.isEmpty()) {
+
+                while (this.agentsRunningTD.size() != this.agentsWhichCompletedCurrentPhase.size()) {
                     try {
                         Thread.sleep(1000);
                     } catch (InterruptedException e) {
