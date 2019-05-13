@@ -55,8 +55,7 @@ public class DriverState {
 
         String podName = hostname.substring(0, hostname.indexOf("." + SVC_NAME + "." +
                 this.driverConfig.getDistributedConfig().getClusterNamespace()));
-        id = Integer.parseInt(podName.substring(podName.lastIndexOf("-") + 1));
-        System.getenv().forEach((key, value) -> System.out.println(key + "   " + value));
+        this.id = Integer.parseInt(podName.substring(podName.lastIndexOf("-") + 1));
         this.nrDrivers = Integer.parseInt(System.getenv("NR_DRIVERS"));
 
         LOG.info("Nr of drivers running in the cluster: " + this.nrDrivers);

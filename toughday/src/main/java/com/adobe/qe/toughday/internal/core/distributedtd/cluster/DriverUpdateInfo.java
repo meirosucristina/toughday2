@@ -3,31 +3,31 @@ package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
 import java.util.Queue;
 
 public class DriverUpdateInfo {
-    private String sourceIP;
+    private int driverId;
     private DriverState.State sourceState;
     private Queue<Integer> invalidCandidates;
-    private Queue<String> agents;
+    private Queue<String> registeredAgents;
 
-    // TODO: add agents currently running tasks
-    // TODO: add agents which finished running the current phase
+    // TODO: add registeredAgents currently running tasks
+    // TODO: add registeredAgents which finished running the current phase
 
 
     // dummy constructor used to dump the class
     public DriverUpdateInfo() {}
 
-    public DriverUpdateInfo(String sourceIp, DriverState.State sourceState, Queue<Integer> invalidCandidates, Queue<String> agents) {
-        this.sourceIP = sourceIp;
+    public DriverUpdateInfo(int driverId, DriverState.State sourceState, Queue<Integer> invalidCandidates, Queue<String> registeredAgents) {
+        this.driverId = driverId;
         this.sourceState = sourceState;
         this.invalidCandidates = invalidCandidates;
-        this.agents = agents;
+        this.registeredAgents = registeredAgents;
     }
 
-    public void setSourceIP(String sourceIP) {
-        this.sourceIP = sourceIP;
+    public int getDriverId() {
+        return this.driverId;
     }
 
-    public String getSourceIP() {
-        return this.sourceIP;
+    public void setDriverId(int driverId) {
+        this.driverId = driverId;
     }
 
     public void setSourceState(DriverState.State driverState) {
@@ -46,12 +46,12 @@ public class DriverUpdateInfo {
         return this.invalidCandidates;
     }
 
-    public void setAgents(Queue<String> agents) {
-        this.agents = agents;
+    public void setRegisteredAgents(Queue<String> registeredAgents) {
+        this.registeredAgents = registeredAgents;
     }
 
-    public Queue<String> getAgents() {
-        return this.agents;
+    public Queue<String> getRegisteredAgents() {
+        return this.registeredAgents;
     }
 
 

@@ -38,6 +38,7 @@ public class Driver {
     private static final String SAMPLE_CONTENT_ACK_PATH = "/contentAck";
     private static final String MASTER_ELECTION_PATH = "/masterElection";
     private static final String ASK_FOR_UPDATES_PATH = "/driverUpdates";
+    private static final String GET_NR_DRIVERS_PATH = "/getNrDrivers";
 
     private static final String HOSTNAME = "driver";
     private static final String PORT = "80";
@@ -71,30 +72,17 @@ public class Driver {
         }
 
         this.masterElection = new MasterElection(this.driverState.getNrDrivers());
-
-        // check if there is already a master running in the cluster
-        this.masterElection.collectUpdatesFromAllDrivers(this);
-
-        // if no master was detected, trigger the master election process
-        this.driverState.getMasterIdLock().readLock().lock();
-        if (this.driverState.getMasterId() == -1) {
-            this.driverState.getMasterIdLock().readLock().unlock();
-            this.masterElection.electMaster(this);
-        } else {
-            this.driverState.getMasterIdLock().readLock().unlock();
-        }
+        this.masterElection.electMasterWhenDriverJoinsTheCluster(this);
 
         LOG.info("Driver " + this.driverState.getHostname() + " elected as master " + this.driverState.getMasterId());
-
-        if (this.driverState.getId() == this.driverState.getMasterId()) {
-            LOG.info("Running as MASTER");
-            this.driverState.setCurrentState(DriverState.State.MASTER);
-        } else {
-            LOG.info("Running as SLAVE");
-            this.driverState.setCurrentState(DriverState.State.SLAVE);
-        }
-
         // TODO: schedule pods to ask for information from all the other drivers running in the cluster
+    }
+
+    /**
+     * Returns the http URL that should be used by the agents to get the number of drivers running in the cluster.
+     */
+    public static String getGetNrDriversPath() {
+        return URL_PREFIX + HOSTNAME + ":" + PORT + GET_NR_DRIVERS_PATH;
     }
 
     /**
@@ -120,6 +108,11 @@ public class Driver {
         return URL_PREFIX + HOSTNAME + ":" + PORT + SAMPLE_CONTENT_ACK_PATH;
     }
 
+    /**
+     * Returns the http URL that should be used by the driver which detected that the current Master died to inform all
+     * the other drivers running in the cluster that the master election process must be triggered.
+     * @param driverHostname : hostname of the driver exposing this http endpoint
+     */
     public static String getMasterElectionPath(String driverHostname) {
         return URL_PREFIX + driverHostname + ":4567" + MASTER_ELECTION_PATH;
     }
@@ -132,6 +125,11 @@ public class Driver {
         return URL_PREFIX + driverHostName + ":4567" + HEALTH_PATH;
     }
 
+    /**
+     * Returns the http URL that should be used by the drivers to get information about the current state of the
+     * execution.
+     * @param driverHostName : hostname of the driver component exposing this http endpoint
+     */
     public static String getAskForUpdatesPath(String driverHostName) {
         return URL_PREFIX + driverHostName + ":4567" + ASK_FOR_UPDATES_PATH;
     }
@@ -286,6 +284,10 @@ public class Driver {
                 GlobalArgs.parseDurationToSeconds("10s"), TimeUnit.SECONDS);
     }
 
+    /**
+     * Method used for cancelling the periodic task of sending heartbeat messages to the driver running as Master in the
+     * cluster.
+     */
     public void cancelMasterHeartBeatTask() {
         if (this.scheduledFuture != null) {
             if(!this.scheduledFuture.cancel(true) && !this.scheduledFuture.isDone()) {
@@ -312,6 +314,9 @@ public class Driver {
 
         /* health check http endpoint */
         get(HEALTH_PATH, ((request, response) -> "Healthy"));
+
+        /* expose http endpoint to allow agents to get the number of drivers running in the cluster */
+        get(GET_NR_DRIVERS_PATH, ((request, response) -> String.valueOf(this.getDriverState().getNrDrivers())));
 
         /* http endpoint used by the agent installing the sample content to announce if the installation was
          * successful or not. */
@@ -341,6 +346,7 @@ public class Driver {
             return "";
         }));
 
+        /* expose http endpoint for triggering the master election process */
         post(MASTER_ELECTION_PATH, ((request, response) -> {
             int failedDriverId = Integer.parseInt(request.body());
 
@@ -359,21 +365,21 @@ public class Driver {
             return "";
         }));
 
+        /* expose http endpoint for sending information about the current state of the distributed execution */
         get(ASK_FOR_UPDATES_PATH, ((request, response) -> {
-            String destinationDriver = request.body();
-            LOG.info("Driver " + destinationDriver + " has requested updates about the state of the cluster ");
+            LOG.info("Driver has requested updates about the state of the cluster.");
 
             // build information to send to the driver that recently joined the cluster
-            DriverUpdateInfo driverUpdateInfo = new DriverUpdateInfo(this.driverState.getHostname(),
-                    this.driverState.getCurrentState(), this.masterElection.getInvalidCandidates(), this.driverState.getRegisteredAgents());
+            DriverUpdateInfo driverUpdateInfo = new DriverUpdateInfo(this.driverState.getId(),
+                    this.driverState.getCurrentState(), this.masterElection.getInvalidCandidates(),
+                    this.driverState.getRegisteredAgents());
 
             ObjectMapper objectMapper = new ObjectMapper();
             String yamlUpdateInfo = objectMapper.writeValueAsString(driverUpdateInfo);
             LOG.info("Create YAML update info: " + yamlUpdateInfo);
 
             // set response
-            response.body(yamlUpdateInfo);
-            return "";
+            return yamlUpdateInfo;
         }));
 
         /* expose http endpoint for registering new agents in the cluster */
