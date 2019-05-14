@@ -47,7 +47,7 @@ public class MasterElection {
         // restore all valid candidates in case there is no option;
         if (candidates.isEmpty()) {
             LOG.info("Resetting list of candidates to be considered for master election");
-            this.candidates = IntStream.rangeClosed(0, nrDrivers).boxed().collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
+            this.candidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed().collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
         }
     }
 

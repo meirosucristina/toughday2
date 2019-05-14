@@ -17,10 +17,7 @@ import java.util.HashMap;
 public class ExecutionTrigger {
 
     protected static final Logger LOG = LogManager.getLogger(ExecutionTrigger.class);
-    private static final String DEFAULT_CLUSTER_PORT = "80";
-
     private final Configuration configuration;
-    private final String executionPath;
 
     public ExecutionTrigger(Configuration configuration) {
         this.configuration = configuration;
@@ -29,9 +26,6 @@ public class ExecutionTrigger {
             throw new IllegalStateException("The public ip address at which the driver's service is accessible " +
                     " is required when running TD in distributed mode.");
         }
-
-        this.executionPath = HttpUtils.URL_PREFIX + configuration.getDistributedConfig().getDriverIp() + ":" + DEFAULT_CLUSTER_PORT
-                + Driver.EXECUTION_PATH;
     }
 
     /**
@@ -42,7 +36,8 @@ public class ExecutionTrigger {
         String yamlConfig = generateYaml.createYamlStringRepresentation();
         HttpUtils httpUtils = new HttpUtils();
 
-        HttpResponse response = httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlConfig, executionPath, 3);
+        HttpResponse response = httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlConfig,
+                Driver.getExecutionPath(this.configuration.getDistributedConfig().getDriverIp(), HttpUtils.SVC_PORT, true), 3);
         if (response == null) {
             LOG.warn("TD execution request could not be sent to driver. Make sure that driver is up" +
                     " and ready to process requests.");

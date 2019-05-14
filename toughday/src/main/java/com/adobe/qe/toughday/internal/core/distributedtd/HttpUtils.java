@@ -22,6 +22,8 @@ public class HttpUtils {
     public static final String GET_METHOD = "GET";
     public static final String URL_PREFIX = "http://";
     public static final int HTTP_REQUEST_RETRIES = 3;
+    public static final String SVC_PORT = "80";
+    public static final String SPARK_PORT = "4567";
 
     private HttpResponse sendGetRequest(String URI) {
         HttpClient httpClient = HttpClientBuilder.create().build();

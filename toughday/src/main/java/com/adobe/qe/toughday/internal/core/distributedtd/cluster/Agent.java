@@ -29,7 +29,6 @@ import static spark.Spark.*;
  * Agent component for running TD distributed.
  */
 public class Agent {
-    private static final String PORT = "4567";
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
     private final ExecutorService tdExecutorService = Executors.newFixedThreadPool(1);
     private final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(1);
@@ -55,10 +54,10 @@ public class Agent {
 
     /**
      * Returns the http URL that the driver should use for finished the execution of the agent.
-     * @param agentItAddress : the ip address that uniquely identifies the agent in the cluster
+     * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
-    public static String getFinishPath(String agentItAddress) {
-        return URL_PREFIX + agentItAddress + ":" + PORT + FINISH_PATH;
+    public static String getFinishPath(String agentIpAddress) {
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + FINISH_PATH;
     }
 
     /**
@@ -66,7 +65,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getHeartbeatPath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" + PORT + HEARTBEAT_PATH;
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + HEARTBEAT_PATH;
     }
 
     /**
@@ -74,7 +73,7 @@ public class Agent {
      * @param agentIpAdress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getSubmissionTaskPath(String agentIpAdress) {
-        return URL_PREFIX + agentIpAdress + ":" + PORT + SUBMIT_TASK_PATH;
+        return URL_PREFIX + agentIpAdress + ":" + HttpUtils.SPARK_PORT + SUBMIT_TASK_PATH;
     }
 
     /**
@@ -82,7 +81,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getRebalancePath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" +  PORT + REBALANCE_PATH;
+        return URL_PREFIX + agentIpAddress + ":" +  HttpUtils.SPARK_PORT + REBALANCE_PATH;
     }
 
     /**
@@ -90,7 +89,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getInstallSampleContentPath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" + PORT + INSTALL_SAMPLE_CONTENT_PATH;
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + INSTALL_SAMPLE_CONTENT_PATH;
     }
 
     /**
@@ -98,7 +97,7 @@ public class Agent {
      * @param agentIpAddress : the ip address that uniquely identifies the agent in the cluster
      */
     public static String getGetStatusPath(String agentIpAddress) {
-        return URL_PREFIX + agentIpAddress + ":" + PORT + GET_STATUS_PATH;
+        return URL_PREFIX + agentIpAddress + ":" + HttpUtils.SPARK_PORT + GET_STATUS_PATH;
     }
 
     private void updateStatus(Status newStatus) {
@@ -130,7 +129,7 @@ public class Agent {
 
         while (duration > 0 && response == null) {
             response = httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, ipAddress,
-                    Driver.getPhaseFinishedByAgentPath(), HTTP_REQUEST_RETRIES);
+                    Driver.getPhaseFinishedByAgentPath("driver", HttpUtils.SVC_PORT, true), HTTP_REQUEST_RETRIES);
 
             try {
                 Thread.sleep(10 * 1000L); // try again in 10 seconds
@@ -145,6 +144,7 @@ public class Agent {
     }
 
     public void start() {
+        LOG.info("Started...");
         register();
 
         /* expose http endpoint to allow the driver to ask for ToughDay sample content package to be installed */
@@ -163,7 +163,7 @@ public class Agent {
                 }
 
                 HttpResponse driverResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, String.valueOf(installed),
-                        Driver.getSampleContentAckPath(), HTTP_REQUEST_RETRIES);
+                        Driver.getSampleContentAckPath("driver", HttpUtils.SVC_PORT), HTTP_REQUEST_RETRIES);
                 if (driverResponse == null) {
                     LOG.error("Agent " + ipAddress + " could not announce the driver that Toughday sample content" +
                             " package was installed.");
@@ -278,9 +278,10 @@ public class Agent {
      * first method executed.
      */
     private void register() {
+        LOG.info("Registering...");
         HttpResponse response =
                 this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, ipAddress,
-                                                Driver.getAgentRegisterPath(), HTTP_REQUEST_RETRIES);
+                        Driver.getAgentRegisterPath("driver", HttpUtils.SVC_PORT, true), HTTP_REQUEST_RETRIES);
         if (response == null) {
             System.out.println("could not register");
             System.exit(-1);

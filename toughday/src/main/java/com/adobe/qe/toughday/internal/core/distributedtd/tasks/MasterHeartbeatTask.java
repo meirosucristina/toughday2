@@ -29,7 +29,7 @@ public class MasterHeartbeatTask implements Runnable {
 
             String hostname = this.driver.getDriverState().getPathForId(i);
             HttpResponse driverResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD,
-                    String.valueOf(this.driver.getDriverState().getMasterId()), Driver.getMasterElectionPath(hostname),
+                    String.valueOf(this.driver.getDriverState().getMasterId()), Driver.getMasterElectionPath(hostname, HttpUtils.SPARK_PORT),
                     HttpUtils.HTTP_REQUEST_RETRIES);
 
             if (driverResponse == null) {

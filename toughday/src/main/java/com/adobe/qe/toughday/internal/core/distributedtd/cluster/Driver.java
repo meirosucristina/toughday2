@@ -2,28 +2,22 @@ package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
-import com.adobe.qe.toughday.internal.core.config.parsers.yaml.YamlDumpConfiguration;
 import com.adobe.qe.toughday.internal.core.distributedtd.tasks.MasterHeartbeatTask;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
-import com.adobe.qe.toughday.internal.core.engine.Phase;
 import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.tasks.HeartbeatTask;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
-import com.adobe.qe.toughday.internal.core.distributedtd.splitters.PhaseSplitter;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpResponse;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.*;
 import java.util.concurrent.*;
 
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.URL_PREFIX;
-import static com.adobe.qe.toughday.internal.core.engine.Engine.logGlobal;
 import static spark.Spark.*;
 
 /**
@@ -41,7 +35,6 @@ public class Driver {
     private static final String GET_NR_DRIVERS_PATH = "/getNrDrivers";
 
     private static final String HOSTNAME = "driver";
-    private static final String PORT = "80";
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
 
     private final ScheduledExecutorService heartbeatScheduler = Executors.newSingleThreadScheduledExecutor();
@@ -53,7 +46,15 @@ public class Driver {
     private DriverState driverState;
     private MasterElection masterElection;
     private ScheduledFuture<?> scheduledFuture;
-    private final Object object = new Object();
+    private final RequestProcessorDispatcher requestProcessorDispatcher = RequestProcessorDispatcher.getInstance();
+
+    public DistributedPhaseMonitor getDistributedPhaseMonitor() {
+        return this.distributedPhaseMonitor;
+    }
+
+    public TaskBalancer getTaskBalancer() {
+        return this.taskBalancer;
+    }
 
     public DriverState getDriverState() {
         return this.driverState;
@@ -61,6 +62,10 @@ public class Driver {
 
     public MasterElection getMasterElection() {
         return this.masterElection;
+    }
+
+    public ScheduledExecutorService getHeartbeatScheduler() {
+        return this.heartbeatScheduler;
     }
 
     public Driver(Configuration configuration) {
@@ -75,37 +80,33 @@ public class Driver {
         this.masterElection.electMasterWhenDriverJoinsTheCluster(this);
 
         LOG.info("Driver " + this.driverState.getHostname() + " elected as master " + this.driverState.getMasterId());
-        // TODO: schedule pods to ask for information from all the other drivers running in the cluster
+    }
+
+    public static String getExecutionPath(String driverIdentifier, String port, boolean forwardReq) {
+        return HttpUtils.URL_PREFIX + driverIdentifier + ":" + port + Driver.EXECUTION_PATH + "?forward=" + forwardReq;
     }
 
     /**
      * Returns the http URL that should be used by the agents to get the number of drivers running in the cluster.
      */
-    public static String getGetNrDriversPath() {
-        return URL_PREFIX + HOSTNAME + ":" + PORT + GET_NR_DRIVERS_PATH;
-    }
-
-    /**
-     * Returns the http URL that should be used by the agents in order to register themselves.
-     */
-    public static String getAgentRegisterPath() {
-        return URL_PREFIX + HOSTNAME + ":" + PORT + REGISTER_PATH;
-    }
+    /*public static String getGetNrDriversPath() {
+        return URL_PREFIX + HOSTNAME + ":" + SVC_PORT + GET_NR_DRIVERS_PATH;
+    } */
 
     /**
      * Returns the http URL that should be used by the agents whenever they finished executing the task received from
      * the driver.
      */
-    public static String getPhaseFinishedByAgentPath() {
-        return URL_PREFIX + HOSTNAME + ":" + PORT + PHASE_FINISHED_BY_AGENT_PATH;
+    public static String getPhaseFinishedByAgentPath(String driverIdentifier, String port, boolean forwardReq) {
+        return URL_PREFIX + driverIdentifier + ":" + port + PHASE_FINISHED_BY_AGENT_PATH + "?forward=" + forwardReq;
     }
 
     /**
      * Returns the http URL that should be used by the agent chosen to install the TD sample content package for
      * informing the driver that the installation was completed successfully.
      */
-    public static String getSampleContentAckPath() {
-        return URL_PREFIX + HOSTNAME + ":" + PORT + SAMPLE_CONTENT_ACK_PATH;
+    public static String getSampleContentAckPath(String driverIdentifier, String port) {
+        return URL_PREFIX + driverIdentifier + ":" + port + SAMPLE_CONTENT_ACK_PATH;
     }
 
     /**
@@ -113,12 +114,12 @@ public class Driver {
      * the other drivers running in the cluster that the master election process must be triggered.
      * @param driverHostname : hostname of the driver exposing this http endpoint
      */
-    public static String getMasterElectionPath(String driverHostname) {
-        return URL_PREFIX + driverHostname + ":4567" + MASTER_ELECTION_PATH;
+    public static String getMasterElectionPath(String driverHostname, String port) {
+        return URL_PREFIX + driverHostname + ":" + port + MASTER_ELECTION_PATH;
     }
 
-    private String getAgentRegisterPath(String driverHostname, boolean forwardReq) {
-        return URL_PREFIX + driverHostname + ":4567" + REGISTER_PATH + "?forward=" + forwardReq;
+    public static String getAgentRegisterPath(String driverIdentifier, String port, boolean forwardReq) {
+        return URL_PREFIX + driverIdentifier + ":" + port + REGISTER_PATH + "?forward=" + forwardReq;
     }
 
     public static String getHealthPath(String driverHostName) {
@@ -134,64 +135,15 @@ public class Driver {
         return URL_PREFIX + driverHostName + ":4567" + ASK_FOR_UPDATES_PATH;
     }
 
-    private void waitForSampleContentToBeInstalled() {
-        synchronized (object) {
-            try {
-                object.wait();
-            } catch (InterruptedException e) {
-                LOG.error("Failed to install ToughDay sample content package. Execution will be stopped.");
-                finishDistributedExecution();
-                System.exit(-1);
-            }
-        }
+    public ExecutorService getExecutorService() {
+        return this.executorService;
     }
 
-    private void installToughdayContentPackage(Configuration configuration) {
-        logGlobal("Installing ToughDay 2 Content Package...");
-        GlobalArgs globalArgs = configuration.getGlobalArgs();
-
-        if (globalArgs.getDryRun() || !globalArgs.getInstallSampleContent()) {
-            return;
-        }
-
-        HttpResponse agentResponse = null;
-        List<String> agentsCopy = new ArrayList<>(this.driverState.getRegisteredAgents());
-
-        while (agentResponse == null && agentsCopy.size() > 0) {
-            // pick one agent to install the sample content
-            String agentIpAddress = agentsCopy.remove(0);
-            String URI = Agent.getInstallSampleContentPath(agentIpAddress);
-            LOG.info("Installing sample content request was sent to agent " + agentIpAddress);
-
-            YamlDumpConfiguration dumpConfig = new YamlDumpConfiguration(configuration);
-            String yamlTask = dumpConfig.generateConfigurationObject();
-
-            agentResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlTask, URI, HTTP_REQUEST_RETRIES);
-        }
-
-        // we should wait until the we receive confirmation that the sample content was successfully installed
-        waitForSampleContentToBeInstalled();
-
-        logGlobal("Finished installing ToughDay 2 Content Package.");
-        globalArgs.setInstallSampleContent("false");
-
+    public void setConfiguration(Configuration configuration) {
+        this.configuration = configuration;
     }
 
-    private void mergeDistributedConfigParams(Configuration configuration) {
-        if (this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds() ==
-                this.configuration.getDistributedConfig().getHeartbeatIntervalInSeconds()) {
-
-            this.driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
-            return;
-        }
-
-        // cancel heartbeat task and reschedule it with the new period
-        this.heartbeatScheduler.shutdownNow();
-        this.driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
-        scheduleHeartbeatTask();
-    }
-
-    private void finishAgents() {
+    public void finishAgents() {
         this.driverState.getRegisteredAgents().forEach(agentIp -> {
             LOG.info("[Driver] Finishing agent " + agentIp);
             HttpResponse response =
@@ -205,7 +157,7 @@ public class Driver {
         this.driverState.getRegisteredAgents().clear();
     }
 
-    private void finishDistributedExecution() {
+    public void finishDistributedExecution() {
         this.executorService.shutdownNow();
         // finish tasks
         this.heartbeatScheduler.shutdownNow();
@@ -213,65 +165,7 @@ public class Driver {
         finishAgents();
     }
 
-    private void handleExecutionRequest(Configuration configuration) {
-        installToughdayContentPackage(configuration);
-        mergeDistributedConfigParams(configuration);
-
-        PhaseSplitter phaseSplitter = new PhaseSplitter();
-
-        for (Phase phase : configuration.getPhases()) {
-            try {
-                Map<String, Phase> tasks = phaseSplitter.splitPhase(phase, new ArrayList<>(this.driverState.getRegisteredAgents()));
-                this.distributedPhaseMonitor.setPhase(phase);
-
-                for (String agentIp : this.driverState.getRegisteredAgents()) {
-                    configuration.setPhases(Collections.singletonList(tasks.get(agentIp)));
-
-                    // convert configuration to yaml representation
-                    YamlDumpConfiguration dumpConfig = new YamlDumpConfiguration(configuration);
-                    String yamlTask = dumpConfig.generateConfigurationObject();
-
-                    /* send query to agent and register running task */
-                    String URI = Agent.getSubmissionTaskPath(agentIp);
-                    HttpResponse response = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlTask, URI, HTTP_REQUEST_RETRIES);
-
-                    if (response != null) {
-                        this.distributedPhaseMonitor.registerAgentRunningTD(agentIp);
-                        LOG.info("Task was submitted to agent " + agentIp);
-                    } else {
-                        /* the assumption is that the agent is no longer active in the cluster and he will fail to respond
-                         * to the heartbeat request sent by the driver. This will automatically trigger process of
-                         * redistributing the work
-                         * */
-                        LOG.info("Task\n" + yamlTask + " could not be submitted to agent " + agentIp +
-                                ". Work will be rebalanced once the agent fails to respond to heartbeat request.");
-                    }
-                }
-
-                // al execution queries were sent => set phase execution start time
-                this.distributedPhaseMonitor.setPhaseStartTime(System.currentTimeMillis());
-
-                // we should wait until all agents complete the current tasks in order to execute phases sequentially
-                if (!this.distributedPhaseMonitor.waitForPhaseCompletion(3)) {
-                    break;
-                }
-
-                LOG.info("Phase " + phase.getName() + " finished execution successfully.");
-
-            } catch (CloneNotSupportedException e) {
-                LOG.error("Phase " + phase.getName() + " could not de divided into tasks to be sent to the agents.", e);
-
-                LOG.info("Finishing agents");
-                finishAgents();
-
-                System.exit(-1);
-            }
-        }
-
-        finishDistributedExecution();
-    }
-
-    private void scheduleHeartbeatTask() {
+    public void scheduleHeartbeatTask() {
         // we should periodically send heartbeat messages from driver to all the agents
         heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this.driverState.getRegisteredAgents(), this.distributedPhaseMonitor,
                         this.configuration, this.driverState.getDriverConfig()),
@@ -300,17 +194,11 @@ public class Driver {
      * Starts the execution of the driver.
      */
     public void run() {
+        RequestProcessorDispatcher dispatcher = RequestProcessorDispatcher.getInstance();
         /* expose http endpoint for running TD with the given configuration */
-        post(EXECUTION_PATH, ((request, response) -> {
-            String yamlConfiguration = request.body();
-            Configuration configuration = new Configuration(yamlConfiguration);
-            this.configuration = configuration;
-
-            // handle execution in a different thread to be able to quickly respond to this request
-            this.executorService.submit(() -> handleExecutionRequest(configuration));
-
-            return "";
-        }));
+        post(EXECUTION_PATH, ((request, response) -> dispatcher.getRequestProcessor(this)
+                .processExecutionRequest(request, response, this)
+        ));
 
         /* health check http endpoint */
         get(HEALTH_PATH, ((request, response) -> "Healthy"));
@@ -320,104 +208,22 @@ public class Driver {
 
         /* http endpoint used by the agent installing the sample content to announce if the installation was
          * successful or not. */
-        post(SAMPLE_CONTENT_ACK_PATH, ((request, response) -> {
-            boolean installed = Boolean.parseBoolean(request.body());
-
-            if (!installed) {
-                LOG.error("Failed to install the ToughDay sample content package. Execution will be stopped.");
-                finishDistributedExecution();
-                System.exit(-1);
-            }
-
-            synchronized (object) {
-                object.notify();
-            }
-
-            return "";
-        }));
+        post(SAMPLE_CONTENT_ACK_PATH, ((request, response) ->
+                    dispatcher.getRequestProcessor(this).acknowledgeSampleContentSuccessfulInstallation(request, this, response)));
 
         /* expose http endpoint to allow agents to announce when they finished executing the current phase */
-        post(PHASE_FINISHED_BY_AGENT_PATH, ((request, response) -> {
-            String agentIp = request.body();
-
-            LOG.info("Agent " + agentIp + " finished executing the current phase.");
-            this.distributedPhaseMonitor.removeAgentFromActiveTDRunners(agentIp);
-
-            return "";
-        }));
+        post(PHASE_FINISHED_BY_AGENT_PATH, ((request, response) ->
+                dispatcher.getRequestProcessor(this).processPhaseCompletionAnnouncement(request)));
 
         /* expose http endpoint for triggering the master election process */
-        post(MASTER_ELECTION_PATH, ((request, response) -> {
-            int failedDriverId = Integer.parseInt(request.body());
-
-            // check if this news was already processed
-            if (this.masterElection.isCandidateInvalid(failedDriverId)) {
-                return "";
-            }
-
-            LOG.info("Driver was informed that the current master (id: " + failedDriverId + ") died");
-            this.masterElection.markCandidateAsInvalid(failedDriverId);
-
-            // pick a new leader
-            this.masterElection.electMaster(this);
-            LOG.info("New master was elected: " + this.driverState.getMasterId());
-
-            return "";
-        }));
+        post(MASTER_ELECTION_PATH, ((request, response) ->
+                dispatcher.getRequestProcessor(this).processMasterElectionRequest(request, this)));
 
         /* expose http endpoint for sending information about the current state of the distributed execution */
-        get(ASK_FOR_UPDATES_PATH, ((request, response) -> {
-            LOG.info("Driver has requested updates about the state of the cluster.");
-
-            // build information to send to the driver that recently joined the cluster
-            DriverUpdateInfo driverUpdateInfo = new DriverUpdateInfo(this.driverState.getId(),
-                    this.driverState.getCurrentState(), this.masterElection.getInvalidCandidates(),
-                    this.driverState.getRegisteredAgents());
-
-            ObjectMapper objectMapper = new ObjectMapper();
-            String yamlUpdateInfo = objectMapper.writeValueAsString(driverUpdateInfo);
-            LOG.info("Create YAML update info: " + yamlUpdateInfo);
-
-            // set response
-            return yamlUpdateInfo;
-        }));
+        get(ASK_FOR_UPDATES_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processUpdatesRequest(request)));
 
         /* expose http endpoint for registering new agents in the cluster */
-        post(REGISTER_PATH, (request, response) -> {
-            String agentIp = request.body();
-
-            LOG.info("[driver] Registered agent with ip " + agentIp);
-            if (!request.queryParams().contains("forward") || !request.queryParams("forward").equals("false")) {
-                /* register new agents to all the drivers running in the cluster */
-                for (int i = 0; i < this.driverState.getNrDrivers(); i++) {
-                    /* skip current driver and inactive drivers */
-                    if (i == this.driverState.getId() || this.driverState.getInactiveDrivers().contains(i)) {
-                        continue;
-                    }
-
-                    LOG.info(this.driverState.getHostname() + ": sending agent register request for agent " + agentIp + "" +
-                            "to driver " + this.driverState.getPathForId(i));
-                    HttpResponse regResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, agentIp,
-                            getAgentRegisterPath(this.driverState.getPathForId(i), false), HTTP_REQUEST_RETRIES);
-                    if (regResponse == null) {
-                        // the assumption is that the new driver will receive the full list of active agents after being restarted
-                        LOG.info("Driver " + this.driverState.getHostname() + "failed to send register request for agent " + agentIp +
-                                "to driver " + this.driverState.getPathForId(i));
-                    }
-                }
-            }
-
-            if (!this.distributedPhaseMonitor.isPhaseExecuting()) {
-                this.driverState.registerAgent(agentIp);
-                LOG.info("[driver] active agents " + this.driverState.getRegisteredAgents().toString());
-                return "";
-            }
-
-            this.taskBalancer.scheduleWorkRedistributionProcess(distributedPhaseMonitor, this.driverState.getRegisteredAgents(),
-                    configuration, this.driverState.getDriverConfig().getDistributedConfig(), agentIp, true);
-
-            return "";
-        });
+        post(REGISTER_PATH, (request, response) -> dispatcher.getRequestProcessor(this).processRegisterRequest(request));
 
         if (this.driverState.getCurrentState() == DriverState.State.MASTER) {
             scheduleHeartbeatTask();
