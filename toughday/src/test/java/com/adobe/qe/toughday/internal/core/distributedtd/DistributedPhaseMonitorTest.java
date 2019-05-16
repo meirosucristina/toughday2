@@ -47,7 +47,7 @@ public class DistributedPhaseMonitorTest {
         this.distributedPhaseMonitor.registerAgentRunningTD("Agent1");
         Assert.assertTrue(this.distributedPhaseMonitor.isPhaseExecuting());
 
-        this.distributedPhaseMonitor.removeAgentFromActiveTDRunners("Agent1");
+        this.distributedPhaseMonitor.addAgentWhichCompletedTheCurrentPhase("Agent1");
     }
 
     @Test

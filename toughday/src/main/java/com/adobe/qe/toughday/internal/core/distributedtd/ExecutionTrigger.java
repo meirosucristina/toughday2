@@ -2,7 +2,7 @@ package com.adobe.qe.toughday.internal.core.distributedtd;
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.GenerateYamlConfiguration;
-import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import org.apache.http.HttpResponse;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;

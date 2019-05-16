@@ -1,8 +1,13 @@
-package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
+package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.requests;
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
+import com.adobe.qe.toughday.internal.core.config.parsers.yaml.GenerateYamlConfiguration;
 import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverUpdateInfo;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.MasterElection;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -13,7 +18,7 @@ import org.apache.logging.log4j.Logger;
 import spark.Request;
 import spark.Response;
 
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,7 +30,6 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
     protected DriverState driverState;
     protected DistributedPhaseMonitor distributedPhaseMonitor;
     protected TaskBalancer taskBalancer;
-    protected Configuration configuration;
     protected MasterElection masterElection;
     protected final HttpUtils httpUtils = new HttpUtils();
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
@@ -38,11 +42,6 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         this.masterElection = masterElection;
     }
 
-    @Override
-    public void setConfiguration(Configuration configuration) {
-        this.configuration = configuration;
-    }
-
     protected List<String> getDriverPathsForRedirectingRequests(Driver currentDriver) {
         return IntStream.rangeClosed(0, currentDriver.getDriverState().getNrDrivers() - 1).boxed()
                 .filter(id -> id != currentDriver.getDriverState().getId()) // exclude current driver
@@ -50,10 +49,10 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
                 .collect(Collectors.toCollection(LinkedList::new));
     }
 
-    public String processRegisterRequest(Request request) {
+    @Override
+    public String processRegisterRequest(Request request, Driver currentDriver) {
         String agentIp = request.body();
 
-        LOG.info("[driver] Registered agent with ip " + agentIp);
         if (request.queryParams("forward").equals("true")) {
             /* register new agents to all the drivers running in the cluster */
             for (int i = 0; i < this.driverState.getNrDrivers(); i++) {
@@ -74,26 +73,31 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
             }
         }
 
-        if (!this.distributedPhaseMonitor.isPhaseExecuting()) {
-            this.driverState.registerAgent(agentIp);
-            LOG.info("[driver] active agents " + this.driverState.getRegisteredAgents().toString());
-            return "";
-        }
-
-        this.taskBalancer.scheduleWorkRedistributionProcess(distributedPhaseMonitor, this.driverState.getRegisteredAgents(),
-                configuration, this.driverState.getDriverConfig().getDistributedConfig(), agentIp, true);
-
         return "";
     }
 
     @Override
-    public String processUpdatesRequest(Request request) throws JsonProcessingException {
+    public String processUpdatesRequest(Request request, Driver currentDriver) throws JsonProcessingException {
         LOG.info("Driver has requested updates about the state of the cluster.");
+        String currentPhaseName = "";
+        String yamlConfig = "";
+
+        /* send configuration received to be executed in distributed mode and the phase being executed at this moment,
+         * if applicable.
+         */
+        if (currentDriver.getConfiguration() != null) {
+            GenerateYamlConfiguration generateYaml =
+                    new GenerateYamlConfiguration(currentDriver.getConfiguration().getConfigParams(), new HashMap<>());
+            yamlConfig = generateYaml.createYamlStringRepresentation();
+            if (currentDriver.getDistributedPhaseMonitor().isPhaseExecuting()) {
+                currentPhaseName = this.distributedPhaseMonitor.getPhase().getName();
+            }
+        }
 
         // build information to send to the driver that recently joined the cluster
         DriverUpdateInfo driverUpdateInfo = new DriverUpdateInfo(this.driverState.getId(),
                 this.driverState.getCurrentState(), this.masterElection.getInvalidCandidates(),
-                this.driverState.getRegisteredAgents());
+                this.driverState.getRegisteredAgents(), yamlConfig, currentPhaseName);
 
         ObjectMapper objectMapper = new ObjectMapper();
         String yamlUpdateInfo = objectMapper.writeValueAsString(driverUpdateInfo);
@@ -127,7 +131,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         String agentIp = request.body();
 
         LOG.info("Agent " + agentIp + " finished executing the current phase.");
-        this.distributedPhaseMonitor.removeAgentFromActiveTDRunners(agentIp);
+        this.distributedPhaseMonitor.addAgentWhichCompletedTheCurrentPhase(agentIp);
 
         /* if this is the first driver receiving this type of request, forward it to all the other drivers running in
          * the cluster.
@@ -154,7 +158,9 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
             }
 
         }
-            return "";
+
+        // TODO: update current phase for stand-by drivers if the phase was successfully finished
+        return "";
     }
 
 
@@ -165,8 +171,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         LOG.info(yamlConfiguration);
 
         // save TD configuration which must be executed in distributed mode
-        this.configuration = new Configuration(yamlConfiguration);
-        currentDriver.setConfiguration(configuration);
+        currentDriver.setConfiguration(new Configuration(yamlConfiguration));
 
         // send TD configuration to all the other drivers running in the cluster
         if (request.queryParams("forward").equals("true")) {

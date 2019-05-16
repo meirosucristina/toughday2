@@ -1,19 +1,27 @@
-package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
+package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver;
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
+import com.adobe.qe.toughday.internal.core.config.parsers.yaml.YamlDumpConfiguration;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.requests.RequestProcessorDispatcher;
+import com.adobe.qe.toughday.internal.core.distributedtd.splitters.PhaseSplitter;
 import com.adobe.qe.toughday.internal.core.distributedtd.tasks.MasterHeartbeatTask;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.tasks.HeartbeatTask;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
+import com.adobe.qe.toughday.internal.core.engine.Phase;
 import org.apache.http.HttpResponse;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.*;
 
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
@@ -45,8 +53,7 @@ public class Driver {
     private Configuration configuration;
     private DriverState driverState;
     private MasterElection masterElection;
-    private ScheduledFuture<?> scheduledFuture;
-    private final RequestProcessorDispatcher requestProcessorDispatcher = RequestProcessorDispatcher.getInstance();
+    private ScheduledFuture<?> scheduledFuture = null;
 
     public DistributedPhaseMonitor getDistributedPhaseMonitor() {
         return this.distributedPhaseMonitor;
@@ -54,6 +61,10 @@ public class Driver {
 
     public TaskBalancer getTaskBalancer() {
         return this.taskBalancer;
+    }
+
+    public Configuration getConfiguration() {
+        return this.configuration;
     }
 
     public DriverState getDriverState() {
@@ -85,13 +96,6 @@ public class Driver {
     public static String getExecutionPath(String driverIdentifier, String port, boolean forwardReq) {
         return HttpUtils.URL_PREFIX + driverIdentifier + ":" + port + Driver.EXECUTION_PATH + "?forward=" + forwardReq;
     }
-
-    /**
-     * Returns the http URL that should be used by the agents to get the number of drivers running in the cluster.
-     */
-    /*public static String getGetNrDriversPath() {
-        return URL_PREFIX + HOSTNAME + ":" + SVC_PORT + GET_NR_DRIVERS_PATH;
-    } */
 
     /**
      * Returns the http URL that should be used by the agents whenever they finished executing the task received from
@@ -172,7 +176,7 @@ public class Driver {
                 0, this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds(), TimeUnit.SECONDS);
     }
 
-    private void scheduleMasterHeartbeatTask() {
+    public void scheduleMasterHeartbeatTask() {
         // we should periodically send heartbeat messages from slaves to check id the master is still running
         this.scheduledFuture = this.heartbeatScheduler.scheduleAtFixedRate(new MasterHeartbeatTask(this), 0,
                 GlobalArgs.parseDurationToSeconds("10s"), TimeUnit.SECONDS);
@@ -188,6 +192,81 @@ public class Driver {
                 LOG.warn("Could not cancel task used to periodically send heartbeat messages to the Master.");
             }
         }
+    }
+
+    public void resumeExecution() {
+        if (this.configuration == null) {
+            return;
+        }
+
+        LOG.info("Resuming execution...");
+        // wait until current phase is successfully finished
+        if (!distributedPhaseMonitor.waitForPhaseCompletion(3)) {
+            finishDistributedExecution();
+            return;
+        }
+
+        LOG.info("Phase " + distributedPhaseMonitor.getPhase().getName() + " finished execution successfully.");
+        configuration.getPhases().remove(0);
+
+        // continue executing all the other phases
+        executePhases();
+    }
+
+
+    public void executePhases() {
+        PhaseSplitter phaseSplitter = new PhaseSplitter();
+
+        for (Phase phase : configuration.getPhases()) {
+            try {
+                Map<String, Phase> tasks = phaseSplitter.splitPhase(phase, new ArrayList<>(this.driverState.getRegisteredAgents()));
+                this.distributedPhaseMonitor.setPhase(phase);
+
+                for (String agentIp : this.driverState.getRegisteredAgents()) {
+                    configuration.setPhases(Collections.singletonList(tasks.get(agentIp)));
+
+                    // convert configuration to yaml representation
+                    YamlDumpConfiguration dumpConfig = new YamlDumpConfiguration(configuration);
+                    String yamlTask = dumpConfig.generateConfigurationObject();
+
+                    /* send query to agent and register running task */
+                    String URI = Agent.getSubmissionTaskPath(agentIp);
+                    HttpResponse response = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlTask, URI, HTTP_REQUEST_RETRIES);
+
+                    if (response != null) {
+                        this.distributedPhaseMonitor.registerAgentRunningTD(agentIp);
+                        LOG.info("Task was submitted to agent " + agentIp);
+                    } else {
+                        /* the assumption is that the agent is no longer active in the cluster and he will fail to respond
+                         * to the heartbeat request sent by the driver. This will automatically trigger process of
+                         * redistributing the work
+                         * */
+                        LOG.info("Task\n" + yamlTask + " could not be submitted to agent " + agentIp +
+                                ". Work will be rebalanced once the agent fails to respond to heartbeat request.");
+                    }
+                }
+
+                // al execution queries were sent => set phase execution start time
+                this.distributedPhaseMonitor.setPhaseStartTime(System.currentTimeMillis());
+
+                // we should wait until all agents complete the current tasks in order to execute phases sequentially
+                if (!this.distributedPhaseMonitor.waitForPhaseCompletion(3)) {
+                    break;
+                }
+
+                LOG.info("Phase " + phase.getName() + " finished execution successfully.");
+
+            } catch (CloneNotSupportedException e) {
+                LOG.error("Phase " + phase.getName() + " could not de divided into tasks to be sent to the agents.", e);
+
+                LOG.info("Finishing agents");
+                finishAgents();
+
+                System.exit(-1);
+            }
+        }
+
+        finishDistributedExecution();
     }
 
     /**
@@ -220,15 +299,9 @@ public class Driver {
                 dispatcher.getRequestProcessor(this).processMasterElectionRequest(request, this)));
 
         /* expose http endpoint for sending information about the current state of the distributed execution */
-        get(ASK_FOR_UPDATES_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processUpdatesRequest(request)));
+        get(ASK_FOR_UPDATES_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processUpdatesRequest(request, this)));
 
         /* expose http endpoint for registering new agents in the cluster */
-        post(REGISTER_PATH, (request, response) -> dispatcher.getRequestProcessor(this).processRegisterRequest(request));
-
-        if (this.driverState.getCurrentState() == DriverState.State.MASTER) {
-            scheduleHeartbeatTask();
-        } else if (this.driverState.getCurrentState() == DriverState.State.SLAVE) {
-            scheduleMasterHeartbeatTask();
-        }
+        post(REGISTER_PATH, (request, response) -> dispatcher.getRequestProcessor(this).processRegisterRequest(request, this));
     }
 }

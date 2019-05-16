@@ -200,6 +200,7 @@ public class TaskBalancer {
                                        DistributedPhaseMonitor distributedPhaseMonitor) {
         agentsToBeExcluded.forEach(activeAgents::remove);
         agentsToBeExcluded.forEach(this.inactiveAgents::remove);
+
         // we should not wait for task completion since the agent running it left the cluster
         agentsToBeExcluded.forEach(distributedPhaseMonitor::removeAgentFromActiveTDRunners);
     }

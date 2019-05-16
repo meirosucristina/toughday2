@@ -55,6 +55,7 @@ public class Engine {
     protected static Random _rnd = new Random();
 
     private final Configuration configuration;
+    private Agent agent;
     private GlobalArgs globalArgs;
     private ExecutorService engineExecutorService = Executors.newFixedThreadPool(2);
     private final ReentrantReadWriteLock engineSync = new ReentrantReadWriteLock();
@@ -91,6 +92,10 @@ public class Engine {
      */
     public GlobalArgs getGlobalArgs() {
         return globalArgs;
+    }
+
+    public void setAgent(Agent agent) {
+        this.agent = agent;
     }
 
     public boolean areTestsRunning() { return testsRunning; }
@@ -425,9 +430,12 @@ public class Engine {
                 LOG.info("Phase interrupted.");
                 long elapsed = System.currentTimeMillis() - start;
 
-                if (configuration.getDistributedConfig().getAgent()) {
-                    Agent.announcePhaseCompletion();
+                if (this.agent != null) {
+                    agent.announcePhaseCompletion();
                 }
+               /* if (configuration.getDistributedConfig().getAgent()) {
+                    Agent.announcePhaseCompletion();
+                }*/
 
                 // if the phase finishes sooner than its duration,
                 // the remainder is split equally between the remaining phases

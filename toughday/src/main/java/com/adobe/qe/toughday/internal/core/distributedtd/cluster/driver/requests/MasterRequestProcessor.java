@@ -1,21 +1,21 @@
-package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
+package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.requests;
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.YamlDumpConfiguration;
 import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.MasterElection;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
-import com.adobe.qe.toughday.internal.core.distributedtd.splitters.PhaseSplitter;
-import com.adobe.qe.toughday.internal.core.engine.Phase;
 import org.apache.http.HttpResponse;
 import spark.Request;
 import spark.Response;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
 import static com.adobe.qe.toughday.internal.core.engine.Engine.logGlobal;
@@ -34,7 +34,7 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
     }
 
     private MasterRequestProcessor(DriverState driverState, DistributedPhaseMonitor distributedPhaseMonitor,
-                                  TaskBalancer taskBalancer, MasterElection masterElection) {
+                                   TaskBalancer taskBalancer, MasterElection masterElection) {
         super(driverState, distributedPhaseMonitor, taskBalancer, masterElection);
     }
 
@@ -83,7 +83,7 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
 
     private void mergeDistributedConfigParams(Configuration configuration, Driver currentDriver) {
         if (this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds() ==
-                this.configuration.getDistributedConfig().getHeartbeatIntervalInSeconds()) {
+                currentDriver.getConfiguration().getDistributedConfig().getHeartbeatIntervalInSeconds()) {
 
             this.driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
             return;
@@ -100,58 +100,7 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         installToughdayContentPackage(configuration, currentDriver);
         mergeDistributedConfigParams(configuration, currentDriver);
 
-        PhaseSplitter phaseSplitter = new PhaseSplitter();
-
-        for (Phase phase : configuration.getPhases()) {
-            try {
-                Map<String, Phase> tasks = phaseSplitter.splitPhase(phase, new ArrayList<>(this.driverState.getRegisteredAgents()));
-                this.distributedPhaseMonitor.setPhase(phase);
-
-                for (String agentIp : this.driverState.getRegisteredAgents()) {
-                    configuration.setPhases(Collections.singletonList(tasks.get(agentIp)));
-
-                    // convert configuration to yaml representation
-                    YamlDumpConfiguration dumpConfig = new YamlDumpConfiguration(configuration);
-                    String yamlTask = dumpConfig.generateConfigurationObject();
-
-                    /* send query to agent and register running task */
-                    String URI = Agent.getSubmissionTaskPath(agentIp);
-                    HttpResponse response = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlTask, URI, HTTP_REQUEST_RETRIES);
-
-                    if (response != null) {
-                        this.distributedPhaseMonitor.registerAgentRunningTD(agentIp);
-                        LOG.info("Task was submitted to agent " + agentIp);
-                    } else {
-                        /* the assumption is that the agent is no longer active in the cluster and he will fail to respond
-                         * to the heartbeat request sent by the driver. This will automatically trigger process of
-                         * redistributing the work
-                         * */
-                        LOG.info("Task\n" + yamlTask + " could not be submitted to agent " + agentIp +
-                                ". Work will be rebalanced once the agent fails to respond to heartbeat request.");
-                    }
-                }
-
-                // al execution queries were sent => set phase execution start time
-                this.distributedPhaseMonitor.setPhaseStartTime(System.currentTimeMillis());
-
-                // we should wait until all agents complete the current tasks in order to execute phases sequentially
-                if (!this.distributedPhaseMonitor.waitForPhaseCompletion(3)) {
-                    break;
-                }
-
-                LOG.info("Phase " + phase.getName() + " finished execution successfully.");
-
-            } catch (CloneNotSupportedException e) {
-                LOG.error("Phase " + phase.getName() + " could not de divided into tasks to be sent to the agents.", e);
-
-                LOG.info("Finishing agents");
-                currentDriver.finishAgents();
-
-                System.exit(-1);
-            }
-        }
-
-        currentDriver.finishDistributedExecution();
+        currentDriver.executePhases();
     }
 
     @Override
@@ -176,7 +125,26 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         super.processExecutionRequest(request, response, currentDriver);
 
         // handle execution in a different thread to be able to quickly respond to this request
-        currentDriver.getExecutorService().submit(() -> handleExecutionRequest(configuration, currentDriver));
+        currentDriver.getExecutorService().submit(() -> handleExecutionRequest(currentDriver.getConfiguration(), currentDriver));
+
+        return "";
+    }
+
+    @Override
+    public String processRegisterRequest(Request request, Driver currentDriver) {
+        super.processRegisterRequest(request, currentDriver);
+        String agentIp = request.body();
+        LOG.info("[driver] Registered agent with ip " + agentIp);
+
+        if (!this.distributedPhaseMonitor.isPhaseExecuting()) {
+            this.driverState.registerAgent(agentIp);
+            LOG.info("[driver] active agents " + this.driverState.getRegisteredAgents().toString());
+            return "";
+        }
+
+        // master must schedule the work redistribution process when a new agent is registering
+        this.taskBalancer.scheduleWorkRedistributionProcess(distributedPhaseMonitor, this.driverState.getRegisteredAgents(),
+                currentDriver.getConfiguration(), this.driverState.getDriverConfig().getDistributedConfig(), agentIp, true);
 
         return "";
     }

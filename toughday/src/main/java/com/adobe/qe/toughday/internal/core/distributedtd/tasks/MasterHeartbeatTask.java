@@ -1,8 +1,8 @@
 package com.adobe.qe.toughday.internal.core.distributedtd.tasks;
 
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
-import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Driver;
-import com.adobe.qe.toughday.internal.core.distributedtd.cluster.DriverState;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import org.apache.http.HttpResponse;
 import org.apache.logging.log4j.LogManager;
@@ -60,22 +60,21 @@ public class MasterHeartbeatTask implements Runnable {
                 Driver.getHealthPath(driverState.getPathForId(driverState.getMasterId())),
                 HttpUtils.HTTP_REQUEST_RETRIES);
 
-        if (driverResponse == null) {
-            LOG.info(driverState.getHostname() + ": master failed to respond to heartbeat message. Master " +
-                    "election process will be triggered soon.");
-            /* mark candidate as inactive */
-            this.driver.getMasterElection().markCandidateAsInvalid(driverState.getMasterId());
-
-            /* announce all drivers that the current master died */
-            announceDriversThatMasterDied();
-
+        if (driverResponse != null) {
             this.driver.getDriverState().getMasterIdLock().readLock().unlock();
-
-            /* elect a new master */
-            this.driver.getMasterElection().electMaster(driver);
-        } else {
-            // release read lock
-            this.driver.getDriverState().getMasterIdLock().readLock().unlock();
+            return;
         }
+
+        LOG.info(driverState.getHostname() + ": master failed to respond to heartbeat message. Master " +
+                "election process will be triggered soon.");
+        /* mark candidate as inactive */
+        this.driver.getMasterElection().markCandidateAsInvalid(driverState.getMasterId());
+
+        /* announce all drivers that the current master died */
+        announceDriversThatMasterDied();
+
+        this.driver.getDriverState().getMasterIdLock().readLock().unlock();
+        /* elect a new master */
+        this.driver.getMasterElection().electMaster(driver);
     }
 }

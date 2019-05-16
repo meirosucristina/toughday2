@@ -1,4 +1,7 @@
-package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
+package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.requests;
+
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
 
 public class RequestProcessorDispatcher {
     private static RequestProcessorDispatcher instance = null;

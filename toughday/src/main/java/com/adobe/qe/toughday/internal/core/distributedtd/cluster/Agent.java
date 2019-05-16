@@ -5,6 +5,7 @@ import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.config.PhaseParams;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.RedistributionInstructionsProcessor;
 import com.google.gson.Gson;
@@ -36,7 +37,8 @@ public class Agent {
     public enum Status {
         IDLE, /* Agent is waiting to receive tasks from the driver */
         BUILDING_CONFIG, /* Agent has received one task from the driver and it is building the TD configuration */
-        RUNNING /* Agent is running TD tests */
+        RUNNING, /* Agent is running TD tests */
+        PHASE_COMPLETED /* Agent finished executing the current phase */
     }
 
     // available routes
@@ -119,10 +121,12 @@ public class Agent {
 
     private final RedistributionInstructionsProcessor redistributionInstructionsProcessor = new RedistributionInstructionsProcessor();
 
-    public static boolean announcePhaseCompletion() {
+    public boolean announcePhaseCompletion() {
+        updateStatus(Status.PHASE_COMPLETED);
         /* the current master might be dead so we should retry this for a certain amount of time before shutting
          * down the execution.
          */
+
         HttpUtils httpUtils = new HttpUtils();
         HttpResponse response = null;
         long duration = GlobalArgs.parseDurationToSeconds("60s");
@@ -180,7 +184,7 @@ public class Agent {
         /* Expose http endpoint for receiving ToughDay execution request from the driver */
         post(SUBMIT_TASK_PATH, ((request, response) ->  {
             this.statusLock.readLock().lock();
-            if (this.status != Status.IDLE) {
+            if (this.status != Status.IDLE && this.status != Status.PHASE_COMPLETED) {
                 LOG.info("Agent is currently executing a different task. Request will be ignored.");
                 this.statusLock.readLock().unlock();
                 return "";
@@ -194,18 +198,18 @@ public class Agent {
 
             Configuration configuration = new Configuration(yamlTask);
             this.engine = new Engine(configuration);
-            configuration.getDistributedConfig().setAgent("true");
+            this.engine.setAgent(this);
+            //configuration.getDistributedConfig().setAgent("true");
 
             tdExecutorService.submit(() ->  {
                 updateStatus(Status.RUNNING);
                 this.engine.runTests();
+                updateStatus(Status.PHASE_COMPLETED);
 
                 if (!announcePhaseCompletion()) {
                     LOG.error("Agent " + ipAddress + " could not inform driver that phase was executed.");
                     System.exit(-1);
                 }
-
-                updateStatus(Status.IDLE);
             });
 
             return "";

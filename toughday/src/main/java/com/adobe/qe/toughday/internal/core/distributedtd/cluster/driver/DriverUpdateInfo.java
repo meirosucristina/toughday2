@@ -1,5 +1,8 @@
-package com.adobe.qe.toughday.internal.core.distributedtd.cluster;
+package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver;
 
+import com.adobe.qe.toughday.internal.core.engine.Engine;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import java.util.Queue;
 
 public class DriverUpdateInfo {
@@ -7,6 +10,10 @@ public class DriverUpdateInfo {
     private DriverState.State sourceState;
     private Queue<Integer> invalidCandidates;
     private Queue<String> registeredAgents;
+    private String yamlConfig;
+    private String currentPhaseName;
+    protected static final Logger LOG = LogManager.getLogger(Engine.class);
+
 
     // TODO: add registeredAgents currently running tasks
     // TODO: add registeredAgents which finished running the current phase
@@ -15,11 +22,14 @@ public class DriverUpdateInfo {
     // dummy constructor used to dump the class
     public DriverUpdateInfo() {}
 
-    public DriverUpdateInfo(int driverId, DriverState.State sourceState, Queue<Integer> invalidCandidates, Queue<String> registeredAgents) {
+    public DriverUpdateInfo(int driverId, DriverState.State sourceState, Queue<Integer> invalidCandidates,
+                            Queue<String> registeredAgents, String yamlConfig, String currentPhaseName) {
         this.driverId = driverId;
         this.sourceState = sourceState;
         this.invalidCandidates = invalidCandidates;
         this.registeredAgents = registeredAgents;
+        this.yamlConfig = yamlConfig;
+        this.currentPhaseName = currentPhaseName;
     }
 
     public int getDriverId() {
@@ -54,5 +64,20 @@ public class DriverUpdateInfo {
         return this.registeredAgents;
     }
 
+    public void setYamlConfig(String yamlConfig) {
+        this.yamlConfig = yamlConfig;
+    }
+
+    public String getYamlConfig() {
+        return this.yamlConfig;
+    }
+
+    public String getCurrentPhaseName() {
+        return this.currentPhaseName;
+    }
+
+    public void setCurrentPhaseName(String currentPhaseName) {
+        this.currentPhaseName = currentPhaseName;
+    }
 
 }
