@@ -5,6 +5,7 @@ import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
 import com.google.gson.Gson;
 import org.apache.http.HttpResponse;
@@ -23,19 +24,17 @@ import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_R
 public class HeartbeatTask implements Runnable {
     protected static final Logger LOG = LogManager.getLogger(Driver.class);
 
-    private final Queue<String> agents;
     private DistributedPhaseMonitor distributedPhaseMonitor;
     private Configuration configuration;
-    private Configuration driverConfiguration;
+    private final DriverState driverState;
     private final HttpUtils httpUtils = new HttpUtils();
     private final TaskBalancer taskBalancer = TaskBalancer.getInstance();
 
-    public HeartbeatTask(Queue<String> agents, DistributedPhaseMonitor distributedPhaseMonitor,
-                         Configuration configuration, Configuration driverConfiguration) {
-        this.agents = agents;
+    public HeartbeatTask(DriverState driverState, DistributedPhaseMonitor distributedPhaseMonitor,
+                         Configuration configuration) {
+        this.driverState = driverState;
         this.distributedPhaseMonitor = distributedPhaseMonitor;
         this.configuration = configuration;
-        this.driverConfiguration = driverConfiguration;
     }
 
     private void processHeartbeatResponse(String agentIp, HttpResponse agentResponse) throws IOException {
@@ -62,7 +61,7 @@ public class HeartbeatTask implements Runnable {
      */
     @Override
     public void run() {
-        List<String> activeAgents = new ArrayList<>(agents);
+        List<String> activeAgents = new ArrayList<>(driverState.getRegisteredAgents());
         // remove agents which previously failed to respond to heartbeat request
         this.taskBalancer.getInactiveAgents().forEach(activeAgents::remove);
 
@@ -80,13 +79,12 @@ public class HeartbeatTask implements Runnable {
             }
 
             if (!this.distributedPhaseMonitor.isPhaseExecuting()) {
-                agents.remove(agentIp);
+                this.driverState.removeAgent(agentIp);
                 continue;
             }
 
-            this.taskBalancer.scheduleWorkRedistributionProcess(this.distributedPhaseMonitor, this.agents,
-                                            this.configuration, this.driverConfiguration.getDistributedConfig(),
-                                            agentIp, false);
+            this.taskBalancer.scheduleWorkRedistributionProcess(this.distributedPhaseMonitor, this.driverState,
+                    this.configuration, agentIp, false);
         }
 
         LOG.info("Number of executions per test: " + this.distributedPhaseMonitor.getExecutionsPerTest());

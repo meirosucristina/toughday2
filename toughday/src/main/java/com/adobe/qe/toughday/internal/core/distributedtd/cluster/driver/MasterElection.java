@@ -15,25 +15,45 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+/**
+ * Class responsible for implementing the master election process to be executed whenever a new Master must be elected
+ * in the cluster.
+ */
 public class MasterElection {
     private int nrDrivers;
     private Queue<Integer> candidates;
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
 
+    /**
+     * Constructor.
+     * @param nrDrivers : number of driver components deployed in the cluster.
+     */
     public MasterElection(int nrDrivers) {
         this.nrDrivers = nrDrivers;
         this.candidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed()
                 .collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
     }
 
+    /**
+     * Mark the given candidate as unable to become the new master, in case the current one fails.
+     * @param candidateId : id used to identify the driver component which should no be taken into consideration when
+     *                    electing a new master.
+     */
     public void markCandidateAsInvalid(int candidateId) {
         this.candidates.remove(candidateId);
     }
 
+    /**
+     * Return true if the given candidate should not be chosen as the new Master; false otherwise.
+     */
     public boolean isCandidateInvalid(int candidateId) {
         return !this.candidates.contains(candidateId);
     }
 
+    /**
+     * Return a list with all the ids of the candidates that should not be taken into consideration when electing a new
+     * master in the cluster.
+     */
     public Queue<Integer> getInvalidCandidates() {
         Queue<Integer> invalidCandidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed()
                 .collect(Collectors.toCollection(LinkedList::new));
@@ -50,6 +70,11 @@ public class MasterElection {
         }
     }
 
+    /**
+     * Method used for electing a new master when a Driver component is joining the cluster.
+     * @param newDriver : driver instance which joined the cluster recently and which is currently not aware if there is
+     *                  already a driver which plays the role of the Master.
+     */
     public void electMasterWhenDriverJoinsTheCluster(Driver newDriver) {
         // check if there is already a master running in the cluster
         collectUpdatesFromAllDrivers(newDriver);
@@ -67,6 +92,10 @@ public class MasterElection {
         after(newDriver);
     }
 
+    /**
+     * Method used for electing a new Master whenever the previous one fails to respond to heartbeat messages.
+     * @param driver : the driver instance electing a new master.
+     */
     public void electMaster(Driver driver) {
         before();
 
@@ -92,7 +121,15 @@ public class MasterElection {
                     try {
                         String status = EntityUtils.toString(agentResponse.getEntity());
                         if (status.equals(Agent.Status.IDLE.toString())) {
+                            LOG.info("Agent " + agentIp + " is idle.");
                             idleAgents.add(agentIp);
+                        } else if (status.equals(Agent.Status.PHASE_COMPLETED.toString())) {
+                            LOG.info(("Agent " + agentIp + " finished executing the current phase."));
+                            driver.getDistributedPhaseMonitor().registerAgentRunningTD(agentIp);
+                            driver.getDistributedPhaseMonitor().addAgentWhichCompletedTheCurrentPhase(agentIp);
+                        } else {
+                            LOG.info("Agent " + agentIp + " is running TD.");
+                            driver.getDistributedPhaseMonitor().registerAgentRunningTD(agentIp);
                         }
                     } catch (IOException e) {
                         LOG.warn("Could not check status of agent. Current phase might not be executed with the "
@@ -119,31 +156,18 @@ public class MasterElection {
             driver.cancelMasterHeartBeatTask();
 
             /* check if work redistribution is required */
-            Queue<String> agentsRunningTD = driver.getDriverState().getRegisteredAgents();
             List<String> idleAgents = getIdleAgents(driver);
-            agentsRunningTD.removeAll(idleAgents);
 
             /* the assumption is that all the registered agents are currently executing TD test or they've completed
              * the execution of the current phase
              */
-            if (driver.getConfiguration() != null) {
-                LOG.info("TD tests are already executed => mark agents as active TD runners");
-                agentsRunningTD.forEach(agent -> driver.getDistributedPhaseMonitor().registerAgentRunningTD(agent));
-            }
-
-            if (!idleAgents.isEmpty()) {
+            if (driver.getConfiguration() != null && !idleAgents.isEmpty()) {
                 LOG.info("New master must redistribute the work between the agents because of idle agents " +
                         idleAgents.toString());
                 idleAgents.forEach(idleAgent ->
                         driver.getTaskBalancer().scheduleWorkRedistributionProcess(driver.getDistributedPhaseMonitor(),
-                                agentsRunningTD, driver.getConfiguration(),
-                                driver.getDriverState().getDriverConfig().getDistributedConfig(), idleAgent, true));
+                                driver.getDriverState(), driver.getConfiguration(), idleAgent, true));
             }
-
-            // TODO: modify what happens when an agent is announcing his phase completion => we should keep a separate
-            //  list with all the agents in this state and consider the phase completed only when both lists
-            //  (activeTDRunners and agentsWhichCompletedThe phase) have the same content. (this should help us avoid
-            //  the case in which we add an agent that completed the phase again into the list of active TD runners
 
             // schedule heartbeat task for periodically checking agents
             LOG.info("Scheduling heartbeat task for monitoring agents...");

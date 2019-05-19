@@ -4,6 +4,8 @@ import com.adobe.qe.toughday.internal.core.TestSuite;
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.YamlDumpConfiguration;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
+import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.adobe.qe.toughday.internal.core.engine.Phase;
 import com.adobe.qe.toughday.internal.core.engine.RunMode;
@@ -83,7 +85,7 @@ public class TaskBalancer {
         this.inactiveAgents.add(agentIdentifier);
     }
 
-    private void waitUntilAllAgentsAreReadyForRebalancing(Queue<String> agents) {
+    private void waitUntilAllAgentsAreReadyForRebalancing(List<String> agents) {
         boolean ready = false;
 
         while(!ready) {
@@ -116,7 +118,7 @@ public class TaskBalancer {
         }
     }
 
-    private void sendInstructionsToExistingAgents(Map<String, Phase> phases, Queue<String> activeAgents) {
+    private void sendInstructionsToExistingAgents(Map<String, Phase> phases, List<String> activeAgents) {
         ObjectMapper mapper = new ObjectMapper();
 
         // send instructions to agents that are already running TD
@@ -156,12 +158,13 @@ public class TaskBalancer {
     }
 
     private void sendExecutionRequestsToNewAgents(List<String> recentlyAddedAgents, Map<String, Phase> phases,
-                                                  Configuration configuration) {
+                                                  Configuration configuration, DriverState driverState) {
         // for the recently added agents, send execution queries
         recentlyAddedAgents.forEach(newAgentIpAddress -> {
             configuration.setPhases(Collections.singletonList(phases.get(newAgentIpAddress)));
             YamlDumpConfiguration dumpConfig = new YamlDumpConfiguration(configuration);
             String yamlTask = dumpConfig.generateConfigurationObject();
+
 
             LOG.info("Sending execution request + " + yamlTask + " to new agent " + newAgentIpAddress);
             HttpResponse response = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, yamlTask,
@@ -174,11 +177,22 @@ public class TaskBalancer {
                 LOG.info("Failed to send task to new agent " + newAgentIpAddress + ".");
             }
 
+            if (driverState.getHostname().equals("driver-0.driver.default.svc.cluster.local")) {
+                LOG.info("KILLING DRIVER FOR TESTING PURPOSE....");
+                try {
+                    Thread.sleep(10000);
+                } catch (InterruptedException e) {
+                    LOG.info(e.getMessage());
+                }
+
+                System.exit(-1);
+            }
+
         });
     }
 
     private void updateStateOfAgents(DistributedPhaseMonitor distributedPhaseMonitor,
-                                     Queue<String> activeAgents, List<String> recentlyAddedAgents,
+                                     DriverState driverState, List<String> recentlyAddedAgents,
                                      Configuration configuration) throws CloneNotSupportedException {
         if (!distributedPhaseMonitor.isPhaseExecuting()) {
             return;
@@ -187,29 +201,32 @@ public class TaskBalancer {
         Phase phase = distributedPhaseMonitor.getPhase();
         // update number of tests that are left to be executed by the agents
         distributedPhaseMonitor.updateCountPerTest();
-        Map<String, Phase> phases = this.phaseSplitter.splitPhaseForRebalancingWork(phase, new ArrayList<>(activeAgents),
+        Map<String, Phase> phases = this.phaseSplitter.splitPhaseForRebalancingWork(phase,
+                new LinkedList<>(driverState.getRegisteredAgents()),
                 new ArrayList<>(recentlyAddedAgents), distributedPhaseMonitor.getPhaseStartTime());
+
         // wait until all agents are able to process redistribution instructions
-        waitUntilAllAgentsAreReadyForRebalancing(activeAgents);
-        sendInstructionsToExistingAgents(phases, activeAgents);
-        sendExecutionRequestsToNewAgents(recentlyAddedAgents, phases, configuration);
+        waitUntilAllAgentsAreReadyForRebalancing(distributedPhaseMonitor.getAgentsRunningTD());
+        sendInstructionsToExistingAgents(phases, distributedPhaseMonitor.getAgentsRunningTD());
+        sendExecutionRequestsToNewAgents(recentlyAddedAgents, phases, configuration, driverState);
 
     }
 
-    private void excludeInactiveAgents(List<String> agentsToBeExcluded, Queue<String> activeAgents,
+    private void excludeInactiveAgents(List<String> agentsToBeExcluded, DriverState driverState,
                                        DistributedPhaseMonitor distributedPhaseMonitor) {
-        agentsToBeExcluded.forEach(activeAgents::remove);
+        agentsToBeExcluded.forEach(driverState::removeAgent);
         agentsToBeExcluded.forEach(this.inactiveAgents::remove);
 
         // we should not wait for task completion since the agent running it left the cluster
         agentsToBeExcluded.forEach(distributedPhaseMonitor::removeAgentFromActiveTDRunners);
     }
 
-    private void after(DistributedPhaseMonitor distributedPhaseMonitor, Queue<String> activeAgents,
-                       List<String> newAgents, Configuration configuration, DistributedConfig distributedConfig) {
+    private void after(DistributedPhaseMonitor distributedPhaseMonitor, DriverState driverState,
+                       List<String> newAgents, Configuration configuration) {
         distributedPhaseMonitor.resetExecutions();
+
         // mark recently added agents as active agents executing tasks
-        activeAgents.addAll(newAgents);
+        newAgents.forEach(driverState::registerAgent);
         newAgents.forEach(distributedPhaseMonitor::registerAgentRunningTD);
         newAgents.forEach(this.recentlyAddedAgents::remove);
         LOG.info("[Redistribution] Finished redistributing the work");
@@ -220,8 +237,8 @@ public class TaskBalancer {
                     this.recentlyAddedAgents.toString());
             this.scheduler.schedule(() -> {
                 LOG.info("[Redistribution] starting delayed work redistribution process");
-                rebalanceWork(distributedPhaseMonitor, activeAgents, configuration, distributedConfig);
-            }, distributedConfig.getRedistributionWaitTimeInSeconds(), TimeUnit.SECONDS);
+                rebalanceWork(distributedPhaseMonitor, driverState, configuration);
+            }, driverState.getDriverConfig().getDistributedConfig().getRedistributionWaitTimeInSeconds(), TimeUnit.SECONDS);
         } else {
             this.status = RedistributionStatus.UNNECESSARY;
         }
@@ -229,41 +246,39 @@ public class TaskBalancer {
 
     }
 
-    private void rebalanceWork(DistributedPhaseMonitor distributedPhaseMonitor, Queue<String> activeAgents,
-                              Configuration configuration, DistributedConfig distributedConfig) {
+    private void rebalanceWork(DistributedPhaseMonitor distributedPhaseMonitor, DriverState driverState,
+                              Configuration configuration) {
         this.status = RedistributionStatus.EXECUTING;
 
         List<String> newAgents = new ArrayList<>(recentlyAddedAgents);
         List<String> inactiveAgents = new ArrayList<>(this.inactiveAgents);
 
         // remove all agents who failed answering the heartbeat request in the past
-        excludeInactiveAgents(inactiveAgents, activeAgents, distributedPhaseMonitor);
+        excludeInactiveAgents(inactiveAgents, driverState, distributedPhaseMonitor);
         LOG.info("[Redistribution] Starting the process....");
 
         try {
-          updateStateOfAgents(distributedPhaseMonitor, activeAgents, newAgents, configuration);
+          updateStateOfAgents(distributedPhaseMonitor, driverState, newAgents, configuration);
         } catch (CloneNotSupportedException e) {
             LOG.warn("");
         }
 
-        after(distributedPhaseMonitor, activeAgents, newAgents, configuration, distributedConfig);
+        after(distributedPhaseMonitor, driverState, newAgents, configuration);
     }
 
     /**
      * Method used for scheduling the process of redistributing the work between the agents running in the cluster. This
      * method is called whenever the number of active agents is changing.
      * @param distributedPhaseMonitor : instance monitoring the current phase executed by the agents running TD
-     * @param activeAgents : agents that are considered to be up and running in the cluster
+     * @param driverState : current state of the driver
      * @param configuration : TD configuration
-     * @param distributedConfig : configuration parameters for running TD distributed
      * @param agentIdentifier : the identifier of the agent that generated this call
      * @param activeAgent : true when the agent represented by agentIdentifier has joined the cluster; false if the
      *                    agent has become inactive(he failed to respond to heartbeat request)
      */
     public void scheduleWorkRedistributionProcess(DistributedPhaseMonitor distributedPhaseMonitor,
-                                                  Queue<String> activeAgents, Configuration configuration,
-                                                  DistributedConfig distributedConfig, String agentIdentifier,
-                                                  boolean activeAgent) {
+                                                  DriverState driverState, Configuration configuration,
+                                                  String agentIdentifier, boolean activeAgent) {
 
         if (activeAgent) {
             this.addNewAgent(agentIdentifier);
@@ -271,13 +286,14 @@ public class TaskBalancer {
             this.addInactiveAgent(agentIdentifier);
         }
 
+        DistributedConfig distributedConfig = driverState.getDriverConfig().getDistributedConfig();
         if (this.status == RedistributionStatus.UNNECESSARY) {
             this.status = RedistributionStatus.SCHEDULED;
             LOG.info("Scheduling redistribution process to start in " +
                     distributedConfig.getRedistributionWaitTimeInSeconds() + " seconds.");
 
             // schedule work redistribution process
-            this.scheduler.schedule(() -> rebalanceWork(distributedPhaseMonitor, activeAgents,configuration,distributedConfig),
+            this.scheduler.schedule(() -> rebalanceWork(distributedPhaseMonitor, driverState ,configuration),
                     distributedConfig.getRedistributionWaitTimeInSeconds(), TimeUnit.SECONDS);
         } else if (this.status == RedistributionStatus.EXECUTING) {
             LOG.info("Work redistribution process must be rescheduled.");

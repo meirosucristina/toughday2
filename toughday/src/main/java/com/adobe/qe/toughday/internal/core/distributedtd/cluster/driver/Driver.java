@@ -171,8 +171,8 @@ public class Driver {
 
     public void scheduleHeartbeatTask() {
         // we should periodically send heartbeat messages from driver to all the agents
-        heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this.driverState.getRegisteredAgents(), this.distributedPhaseMonitor,
-                        this.configuration, this.driverState.getDriverConfig()),
+        heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this.driverState, this.distributedPhaseMonitor,
+                        this.configuration),
                 0, this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds(), TimeUnit.SECONDS);
     }
 
@@ -276,7 +276,7 @@ public class Driver {
         RequestProcessorDispatcher dispatcher = RequestProcessorDispatcher.getInstance();
         /* expose http endpoint for running TD with the given configuration */
         post(EXECUTION_PATH, ((request, response) -> dispatcher.getRequestProcessor(this)
-                .processExecutionRequest(request, response, this)
+                .processExecutionRequest(request, this)
         ));
 
         /* health check http endpoint */

@@ -104,12 +104,12 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
     }
 
     @Override
-    public String acknowledgeSampleContentSuccessfulInstallation(Request request, Driver currentDriver, Response response) {
+    public String acknowledgeSampleContentSuccessfulInstallation(Request request, Driver driverInstance, Response response) {
         boolean installed = Boolean.parseBoolean(request.body());
 
         if (!installed) {
             LOG.error("Failed to install the ToughDay sample content package. Execution will be stopped.");
-            currentDriver.finishDistributedExecution();
+            driverInstance.finishDistributedExecution();
             System.exit(-1);
         }
 
@@ -121,18 +121,18 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
     }
 
     @Override
-    public String processExecutionRequest(Request request, Response response, Driver currentDriver) throws Exception {
-        super.processExecutionRequest(request, response, currentDriver);
+    public String processExecutionRequest(Request request, Driver driverInstance) throws Exception {
+        super.processExecutionRequest(request, driverInstance);
 
         // handle execution in a different thread to be able to quickly respond to this request
-        currentDriver.getExecutorService().submit(() -> handleExecutionRequest(currentDriver.getConfiguration(), currentDriver));
+        driverInstance.getExecutorService().submit(() -> handleExecutionRequest(driverInstance.getConfiguration(), driverInstance));
 
         return "";
     }
 
     @Override
-    public String processRegisterRequest(Request request, Driver currentDriver) {
-        super.processRegisterRequest(request, currentDriver);
+    public String processRegisterRequest(Request request, Driver driverInstance) {
+        super.processRegisterRequest(request, driverInstance);
         String agentIp = request.body();
         LOG.info("[driver] Registered agent with ip " + agentIp);
 
@@ -143,8 +143,8 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         }
 
         // master must schedule the work redistribution process when a new agent is registering
-        this.taskBalancer.scheduleWorkRedistributionProcess(distributedPhaseMonitor, this.driverState.getRegisteredAgents(),
-                currentDriver.getConfiguration(), this.driverState.getDriverConfig().getDistributedConfig(), agentIp, true);
+        this.taskBalancer.scheduleWorkRedistributionProcess(distributedPhaseMonitor, this.driverState,
+                driverInstance.getConfiguration(), agentIp, true);
 
         return "";
     }

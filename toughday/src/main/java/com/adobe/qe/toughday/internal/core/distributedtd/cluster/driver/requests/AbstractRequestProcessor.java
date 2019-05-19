@@ -16,7 +16,6 @@ import org.apache.http.HttpResponse;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import spark.Request;
-import spark.Response;
 
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -50,7 +49,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
     }
 
     @Override
-    public String processRegisterRequest(Request request, Driver currentDriver) {
+    public String processRegisterRequest(Request request, Driver driverInstance) {
         String agentIp = request.body();
 
         if (request.queryParams("forward").equals("true")) {
@@ -77,7 +76,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
     }
 
     @Override
-    public String processUpdatesRequest(Request request, Driver currentDriver) throws JsonProcessingException {
+    public String processUpdatesRequest(Request request, Driver driverInstance) throws JsonProcessingException {
         LOG.info("Driver has requested updates about the state of the cluster.");
         String currentPhaseName = "";
         String yamlConfig = "";
@@ -85,11 +84,11 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         /* send configuration received to be executed in distributed mode and the phase being executed at this moment,
          * if applicable.
          */
-        if (currentDriver.getConfiguration() != null) {
+        if (driverInstance.getConfiguration() != null) {
             GenerateYamlConfiguration generateYaml =
-                    new GenerateYamlConfiguration(currentDriver.getConfiguration().getConfigParams(), new HashMap<>());
+                    new GenerateYamlConfiguration(driverInstance.getConfiguration().getConfigParams(), new HashMap<>());
             yamlConfig = generateYaml.createYamlStringRepresentation();
-            if (currentDriver.getDistributedPhaseMonitor().isPhaseExecuting()) {
+            if (driverInstance.getDistributedPhaseMonitor().isPhaseExecuting()) {
                 currentPhaseName = this.distributedPhaseMonitor.getPhase().getName();
             }
         }
@@ -108,7 +107,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
     }
 
     @Override
-    public String processMasterElectionRequest(Request request, Driver currentDriver) {
+    public String processMasterElectionRequest(Request request, Driver driverInstance) {
         int failedDriverId = Integer.parseInt(request.body());
 
         // check if this news was already processed
@@ -120,7 +119,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         this.masterElection.markCandidateAsInvalid(failedDriverId);
 
         // pick a new leader
-        this.masterElection.electMaster(currentDriver);
+        this.masterElection.electMaster(driverInstance);
         LOG.info("New master was elected: " + this.driverState.getMasterId());
 
         return "";
@@ -165,17 +164,17 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
 
 
     @Override
-    public String processExecutionRequest(Request request, Response response, Driver currentDriver) throws Exception {
+    public String processExecutionRequest(Request request, Driver driverInstance) throws Exception {
         String yamlConfiguration = request.body();
         LOG.info("Received execution request for TD configuration:\n");
         LOG.info(yamlConfiguration);
 
         // save TD configuration which must be executed in distributed mode
-        currentDriver.setConfiguration(new Configuration(yamlConfiguration));
+        driverInstance.setConfiguration(new Configuration(yamlConfiguration));
 
         // send TD configuration to all the other drivers running in the cluster
         if (request.queryParams("forward").equals("true")) {
-            List<String> forwardPaths = this.getDriverPathsForRedirectingRequests(currentDriver);
+            List<String> forwardPaths = this.getDriverPathsForRedirectingRequests(driverInstance);
             forwardPaths.forEach(forwardPath -> {
                 LOG.info("Forwarding execution request to driver " + forwardPath);
                 HttpResponse driverResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, request.body(),

@@ -28,8 +28,8 @@ public class SlaveRequestProcessor extends AbstractRequestProcessor {
     }
 
     @Override
-    public String processRegisterRequest(Request request, Driver currentDriver) {
-        super.processRegisterRequest(request, currentDriver);
+    public String processRegisterRequest(Request request, Driver driverInstance) {
+        super.processRegisterRequest(request, driverInstance);
 
         String agentIp = request.body();
         this.driverState.registerAgent(agentIp);
@@ -40,7 +40,7 @@ public class SlaveRequestProcessor extends AbstractRequestProcessor {
     }
 
     @Override
-    public String acknowledgeSampleContentSuccessfulInstallation(Request request, Driver currentDriver, Response response) {
+    public String acknowledgeSampleContentSuccessfulInstallation(Request request, Driver driverInstance, Response response) {
         LOG.info("Slave redirecting sample content ack to the master...");
         // another driver should be chosen for this responsibility
         if (this.driverState.getMasterId() == -1) {
@@ -59,13 +59,13 @@ public class SlaveRequestProcessor extends AbstractRequestProcessor {
     }
 
     @Override
-    public String processExecutionRequest(Request request, Response response, Driver currentDriver) throws Exception {
-        super.processExecutionRequest(request, response, currentDriver);
+    public String processExecutionRequest(Request request, Driver driverInstance) throws Exception {
+        super.processExecutionRequest(request, driverInstance);
 
         // slaves will assume that the execution started successfully
-        currentDriver.getDistributedPhaseMonitor().setPhase(currentDriver.getConfiguration().getPhases().get(0));
+        driverInstance.getDistributedPhaseMonitor().setPhase(driverInstance.getConfiguration().getPhases().get(0));
         // the assumption is that the master is responsible for installing TD sample content
-        currentDriver.getConfiguration().getGlobalArgs().setInstallSampleContent("false");
+        driverInstance.getConfiguration().getGlobalArgs().setInstallSampleContent("false");
 
         return "";
     }
