@@ -3,13 +3,10 @@ package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.request
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.YamlDumpConfiguration;
-import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
-import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.MasterElection;
-import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
 import org.apache.http.HttpResponse;
 import spark.Request;
 import spark.Response;
@@ -20,22 +17,27 @@ import java.util.List;
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
 import static com.adobe.qe.toughday.internal.core.engine.Engine.logGlobal;
 
+/**
+ * Specifies how the master will process the HTTP requests received from the other components running in the cluster.
+ */
 public class MasterRequestProcessor extends AbstractRequestProcessor {
     private final Object object = new Object();
     private static MasterRequestProcessor instance = null;
 
+    /**
+     * Returns an instance of this class.
+     * @param driver : the driver instance that will use this class for processing HTTP requests.
+     */
     public static MasterRequestProcessor getInstance(Driver driver) {
-        if (instance == null) {
-            instance = new MasterRequestProcessor(driver.getDriverState(), driver.getDistributedPhaseMonitor(),
-                    driver.getTaskBalancer(), driver.getMasterElection());
+        if (instance == null || !instance.driverInstance.equals(driver)) {
+            instance = new MasterRequestProcessor(driver);
         }
 
         return instance;
     }
 
-    private MasterRequestProcessor(DriverState driverState, DistributedPhaseMonitor distributedPhaseMonitor,
-                                   TaskBalancer taskBalancer, MasterElection masterElection) {
-        super(driverState, distributedPhaseMonitor, taskBalancer, masterElection);
+    private MasterRequestProcessor(Driver driverInstance) {
+        super(driverInstance);
     }
 
     private void waitForSampleContentToBeInstalled(Driver currentDriver) {
@@ -59,7 +61,7 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         }
 
         HttpResponse agentResponse = null;
-        List<String> agentsCopy = new ArrayList<>(this.driverState.getRegisteredAgents());
+        List<String> agentsCopy = new ArrayList<>(this.driverInstance.getDriverState().getRegisteredAgents());
 
         while (agentResponse == null && agentsCopy.size() > 0) {
             // pick one agent to install the sample content
@@ -82,16 +84,18 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
     }
 
     private void mergeDistributedConfigParams(Configuration configuration, Driver currentDriver) {
-        if (this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds() ==
+        DriverState driverState = currentDriver.getDriverState();
+
+        if (driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds() ==
                 currentDriver.getConfiguration().getDistributedConfig().getHeartbeatIntervalInSeconds()) {
 
-            this.driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
+            driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
             return;
         }
 
         // cancel heartbeat task and reschedule it with the new period
         currentDriver.getHeartbeatScheduler().shutdownNow();
-        this.driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
+        driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
         currentDriver.scheduleHeartbeatTask();
     }
 
@@ -134,17 +138,18 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
     public String processRegisterRequest(Request request, Driver driverInstance) {
         super.processRegisterRequest(request, driverInstance);
         String agentIp = request.body();
+        DriverState driverState = this.driverInstance.getDriverState();
         LOG.info("[driver] Registered agent with ip " + agentIp);
 
-        if (!this.distributedPhaseMonitor.isPhaseExecuting()) {
-            this.driverState.registerAgent(agentIp);
-            LOG.info("[driver] active agents " + this.driverState.getRegisteredAgents().toString());
+        if (!this.driverInstance.getDistributedPhaseMonitor().isPhaseExecuting()) {
+            driverState.registerAgent(agentIp);
+            LOG.info("[driver] active agents " + driverState.getRegisteredAgents().toString());
             return "";
         }
 
         // master must schedule the work redistribution process when a new agent is registering
-        this.taskBalancer.scheduleWorkRedistributionProcess(distributedPhaseMonitor, this.driverState,
-                driverInstance.getConfiguration(), agentIp, true);
+        this.driverInstance.getTaskBalancer().scheduleWorkRedistributionProcess(this.driverInstance.getDistributedPhaseMonitor(),
+                driverState, driverInstance.getConfiguration(), agentIp, true);
 
         return "";
     }

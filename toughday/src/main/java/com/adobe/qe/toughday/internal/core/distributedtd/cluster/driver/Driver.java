@@ -169,6 +169,10 @@ public class Driver {
         finishAgents();
     }
 
+    /**
+     * Method used for scheduling the periodic task of sending heartbeat messages to all the agents running in the
+     * cluster to be executed at every 'heartbeatInterval' seconds.
+     */
     public void scheduleHeartbeatTask() {
         // we should periodically send heartbeat messages from driver to all the agents
         heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this.driverState, this.distributedPhaseMonitor,
@@ -176,6 +180,10 @@ public class Driver {
                 0, this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds(), TimeUnit.SECONDS);
     }
 
+    /**
+     * Method used for scheduling the periodic task of sending heartbeat messages to the driver playing the role of the
+     * Master to be executed at every 10 seconds.
+     */
     public void scheduleMasterHeartbeatTask() {
         // we should periodically send heartbeat messages from slaves to check id the master is still running
         this.scheduledFuture = this.heartbeatScheduler.scheduleAtFixedRate(new MasterHeartbeatTask(this), 0,

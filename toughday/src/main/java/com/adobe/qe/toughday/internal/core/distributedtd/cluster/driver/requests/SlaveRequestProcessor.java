@@ -1,30 +1,33 @@
 package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.requests;
 
-import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
-import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.MasterElection;
-import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
 import org.apache.http.HttpResponse;
 import spark.Request;
 import spark.Response;
 
+/**
+ * Specifies how a slave will process the HTTP requests received from the other drivers or the agents running in the
+ * cluster.
+ */
 public class SlaveRequestProcessor extends AbstractRequestProcessor {
     private static SlaveRequestProcessor instance = null;
 
+    /**
+     * Returns an instance of this class.
+     * @param driver : the driver instance that will use this class for processing HTTP requests.
+     */
     public static SlaveRequestProcessor getInstance(Driver driver) {
-        if (instance == null) {
-            instance = new SlaveRequestProcessor(driver.getDriverState(), driver.getDistributedPhaseMonitor(),
-                    driver.getTaskBalancer(), driver.getMasterElection());
+        if (instance == null || !instance.driverInstance.equals(driver)) {
+            instance = new SlaveRequestProcessor(driver);
         }
 
         return instance;
     }
 
-    private SlaveRequestProcessor(DriverState driverState, DistributedPhaseMonitor distributedPhaseMonitor,
-                                  TaskBalancer taskBalancer, MasterElection masterElection) {
-        super(driverState, distributedPhaseMonitor, taskBalancer, masterElection);
+    private SlaveRequestProcessor(Driver driverInstance) {
+        super(driverInstance);
     }
 
     @Override
@@ -32,23 +35,25 @@ public class SlaveRequestProcessor extends AbstractRequestProcessor {
         super.processRegisterRequest(request, driverInstance);
 
         String agentIp = request.body();
-        this.driverState.registerAgent(agentIp);
+        this.driverInstance.getDriverState().registerAgent(agentIp);
         LOG.info("[driver] Registered agent with ip " + agentIp);
-        LOG.info("[driver] active agents " + this.driverState.getRegisteredAgents().toString());
+        LOG.info("[driver] active agents " + this.driverInstance.getDriverState().getRegisteredAgents().toString());
 
         return "";
     }
 
     @Override
     public String acknowledgeSampleContentSuccessfulInstallation(Request request, Driver driverInstance, Response response) {
+        DriverState driverState = driverInstance.getDriverState();
+
         LOG.info("Slave redirecting sample content ack to the master...");
         // another driver should be chosen for this responsibility
-        if (this.driverState.getMasterId() == -1) {
+        if (driverState.getMasterId() == -1) {
             response.status(503);
         }
         // request should be forwarded to the current master
         HttpResponse masterResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, request.body(),
-                Driver.getSampleContentAckPath(this.driverState.getPathForId(this.driverState.getMasterId()), HttpUtils.SPARK_PORT),
+                Driver.getSampleContentAckPath(driverState.getPathForId(driverState.getMasterId()), HttpUtils.SPARK_PORT),
                 HttpUtils.HTTP_REQUEST_RETRIES);
 
         if (masterResponse == null) {

@@ -65,9 +65,13 @@ public class MasterElection {
     private void before() {
         // restore all valid candidates in case there is no option;
         if (candidates.isEmpty()) {
-            LOG.info("Resetting list of candidates to be considered for master election");
-            this.candidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed().collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
+            resetInvalidCandidates();
         }
+    }
+
+    public void resetInvalidCandidates() {
+        LOG.info("Resetting list of candidates to be considered for master election");
+        this.candidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed().collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
     }
 
     /**
@@ -140,8 +144,6 @@ public class MasterElection {
 
         return idleAgents;
     }
-
-
 
     private void after(Driver driver) {
         // cancel heartbeat task for the diver elected as the new master

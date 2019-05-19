@@ -16,6 +16,9 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
 
+/**
+ * Class responsible for encapsulating all the information required for describing the state of a Driver component.
+ */
 public class DriverState {
     // Documentation says that each service has the following DNS A record: my-svc.my-namespace.svc.cluster.local
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
@@ -23,7 +26,6 @@ public class DriverState {
     private final String hostname;
     private static final String SVC_NAME = "driver";
     private final Queue<String> agents = new ConcurrentLinkedQueue<>();
-    private final Queue<Integer> inactiveDrivers = new ConcurrentLinkedQueue<>();
     private final int id;
     private int masterId = -1;
     private int nrDrivers;
@@ -32,21 +34,31 @@ public class DriverState {
     private final ReadWriteLock masterIdLock = new ReentrantReadWriteLock();
 
     public enum State {
-        CHOOSING_MASTER,
-        PICKED_MASTER,
         SLAVE,
         MASTER
     }
 
+    /**
+     * Returns the URI to be used for identifying a driver component using its id.
+     * @param id : the unique identifier associated with the driver component.
+     */
     public String getPathForId(int id) {
         return SVC_NAME + "-" + id + "." + SVC_NAME + "." +
                 this.driverConfig.getDistributedConfig().getClusterNamespace() + ".svc.cluster.local";
     }
 
+    /**
+     * Returns the lock used for synchronised access to the id of the driver component considered to be the Master.
+     */
     public ReadWriteLock getMasterIdLock() {
         return this.masterIdLock;
     }
 
+    /**
+     * Constructor.
+     * @param hostname : hostname used to access the driver service inside the cluster.
+     * @param driverConfig : TD configuration used for deploying the driver.
+     */
     public DriverState(String hostname, Configuration driverConfig) {
         this.driverConfig = driverConfig;
         this.hostname = hostname;
@@ -65,81 +77,115 @@ public class DriverState {
 
         LOG.info("Nr of drivers running in the cluster: " + this.nrDrivers);
         LOG.info("ID is " + this.id);
+
+        this.currentState = State.SLAVE;
     }
 
+    /**
+     * Getter for the hostname.
+     */
     public String getHostname() {
         return this.hostname;
     }
 
+    /**
+     * Getter for the id associated with the driver.
+     */
     public int getId() {
         return this.id;
     }
 
+    /**
+     * Getter for the id of the driver considered to be the current master.
+     */
     public int getMasterId() {
         return this.masterId;
     }
 
+    /**
+     * Getter for the number of driver components deployed in the cluster.
+     */
     public int getNrDrivers() {
         return this.nrDrivers;
     }
 
+    /**
+     * Returns the list of active agents running in the cluster.
+     */
     public Queue<String> getRegisteredAgents() {
         return this.agents;
     }
 
+    /**
+     * Adds the agent to the list of agents running in the cluster.
+     * @param agentIdentifier : ipAddress used to uniquely identify the agent inside the cluster.
+     */
     public void registerAgent(String agentIdentifier) {
         this.agents.add(agentIdentifier);
     }
 
-    public void addInactiveDriver(int driverIdentifier) {
-        this.inactiveDrivers.add(driverIdentifier);
-    }
-
-    public Queue<Integer> getInactiveDrivers() {
-        return this.inactiveDrivers;
-    }
-
-    public void removeInactiveDriver(int driverIdentifier) {
-        this.inactiveDrivers.remove(driverIdentifier);
-    }
-
+    /**
+     * Removes an agent from the list of active agents running in the cluster.
+     * @param agentIdentifier
+     */
     public void removeAgent(String agentIdentifier) {
         this.agents.remove(agentIdentifier);
     }
 
+    /**
+     * Getter for the TD configuration of the driver component.
+     */
     public Configuration getDriverConfig() {
         return this.driverConfig;
     }
 
+    /**
+     * Getter for the current status of the driver component. (Master or Slave)
+     * @return
+     */
     public State getCurrentState() {
         return this.currentState;
     }
 
+    /**
+     * Setter the current status of the driver component.
+     * @param state
+     */
     public void setCurrentState(State state) {
         this.currentState = state;
     }
 
+    /**
+     * Setter for the id of the driver running as master in the cluster.
+     */
     public void setMasterId(int id) {
         this.masterId = id;
     }
 
-    public void updateDriverState(DriverUpdateInfo updates, Driver currentDriver) {
+    /**
+     * Method used for updating the state of the cluster when information is received from another drivers. This method
+     * is called usually when a new driver joins the cluster and needs to know the current state of the execution (for
+     * example how many active agents are registered in the cluster)
+     * @param updates : information received from other drivers running in the cluster
+     * @param driverInstance : the Driver instance which received the updates.
+     */
+    public void updateDriverState(DriverUpdateInfo updates, Driver driverInstance) {
         // excludes candidates which are not allowed to become master
-        updates.getInvalidCandidates().forEach(currentDriver.getMasterElection()::markCandidateAsInvalid);
+        updates.getInvalidCandidates().forEach(driverInstance.getMasterElection()::markCandidateAsInvalid);
 
         // add all agents
-        updates.getRegisteredAgents().forEach(currentDriver.getDriverState()::registerAgent);
+        updates.getRegisteredAgents().forEach(driverInstance.getDriverState()::registerAgent);
         LOG.info("After processing update instructions, registered agents is " +
-                currentDriver.getDriverState().getRegisteredAgents().toString());
+                driverInstance.getDriverState().getRegisteredAgents().toString());
         LOG.info("After processing update instructions, invalid candidates are: " +
                 updates.getInvalidCandidates().toString());
 
         // build TD configuration to be executed distributed
-        if (!updates.getYamlConfig().isEmpty() && currentDriver.getConfiguration() == null) {
+        if (!updates.getYamlConfig().isEmpty() && driverInstance.getConfiguration() == null) {
             LOG.info("Building configuration received from the other drivers running in the cluster.");
             try {
                 Configuration configuration = new Configuration(updates.getYamlConfig());
-                currentDriver.setConfiguration(configuration);
+                driverInstance.setConfiguration(configuration);
             } catch (InvocationTargetException | NoSuchMethodException | InstantiationException | IOException |
                     IllegalAccessException e) {
                 /* if driver can't build the configuration executed distributed it will not be able to become the master
@@ -151,7 +197,7 @@ public class DriverState {
             }
 
             // delete phases that were previously executed
-            List<Phase> phases = currentDriver.getConfiguration().getPhases();
+            List<Phase> phases = driverInstance.getConfiguration().getPhases();
             List<Phase> previouslyExecutedPhases = new ArrayList<>();
             for (Phase phase : phases) {
                 if (phase.getName().equals(updates.getCurrentPhaseName())) {
@@ -163,8 +209,8 @@ public class DriverState {
             phases.removeAll(previouslyExecutedPhases);
 
             // set current phase to be monitored
-            currentDriver.getDistributedPhaseMonitor().setPhase(phases.get(0));
-            LOG.info("Current phase being executed is " + currentDriver.getDistributedPhaseMonitor().getPhase().getName());
+            driverInstance.getDistributedPhaseMonitor().setPhase(phases.get(0));
+            LOG.info("Current phase being executed is " + driverInstance.getDistributedPhaseMonitor().getPhase().getName());
         }
     }
 }

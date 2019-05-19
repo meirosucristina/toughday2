@@ -2,13 +2,11 @@ package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.request
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.GenerateYamlConfiguration;
-import com.adobe.qe.toughday.internal.core.distributedtd.DistributedPhaseMonitor;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverUpdateInfo;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.MasterElection;
-import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.TaskBalancer;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,49 +23,56 @@ import java.util.stream.IntStream;
 
 import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
 
+/**
+ * Base implementation for the RequestProcessor interface. Implements the common actions that should be taken by both
+ * driver components (master and slave) when receiving certain types of HTTP requests.
+ */
 public abstract class AbstractRequestProcessor implements RequestProcessor {
-    protected DriverState driverState;
-    protected DistributedPhaseMonitor distributedPhaseMonitor;
-    protected TaskBalancer taskBalancer;
-    protected MasterElection masterElection;
     protected final HttpUtils httpUtils = new HttpUtils();
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
+    protected Driver driverInstance;
 
-    public AbstractRequestProcessor(DriverState driverState, DistributedPhaseMonitor distributedPhaseMonitor,
-                                    TaskBalancer taskBalancer, MasterElection masterElection) {
-        this.driverState = driverState;
-        this.distributedPhaseMonitor = distributedPhaseMonitor;
-        this.taskBalancer = taskBalancer;
-        this.masterElection = masterElection;
+    /**
+     * Constructor.
+     * @param driverInstance : the driver Instance which will receive the http requests to be processed.
+     */
+    public AbstractRequestProcessor(Driver driverInstance) {
+        this.driverInstance = driverInstance;
     }
 
-    protected List<String> getDriverPathsForRedirectingRequests(Driver currentDriver) {
-        return IntStream.rangeClosed(0, currentDriver.getDriverState().getNrDrivers() - 1).boxed()
-                .filter(id -> id != currentDriver.getDriverState().getId()) // exclude current driver
-                .map(id -> currentDriver.getDriverState().getPathForId(id))
+    /**
+     * Returns a list containing the URIs that should be used for forwarding a request to all the other drivers running
+     * in the cluster.
+     * @param driverInstance : the driver instance that must forward the request.
+     */
+    protected List<String> getDriverPathsForRedirectingRequests(Driver driverInstance) {
+        return IntStream.rangeClosed(0, driverInstance.getDriverState().getNrDrivers() - 1).boxed()
+                .filter(id -> id != driverInstance.getDriverState().getId()) // exclude current driver
+                .map(id -> driverInstance.getDriverState().getPathForId(id))
                 .collect(Collectors.toCollection(LinkedList::new));
     }
 
     @Override
     public String processRegisterRequest(Request request, Driver driverInstance) {
         String agentIp = request.body();
+        DriverState driverState = this.driverInstance.getDriverState();
 
         if (request.queryParams("forward").equals("true")) {
             /* register new agents to all the drivers running in the cluster */
-            for (int i = 0; i < this.driverState.getNrDrivers(); i++) {
-                /* skip current driver and inactive drivers */
-                if (i == this.driverState.getId() || this.driverState.getInactiveDrivers().contains(i)) {
+            for (int i = 0; i < driverState.getNrDrivers(); i++) {
+                /* skip current driver */
+                if (i == driverState.getId()) {
                     continue;
                 }
 
-                LOG.info(this.driverState.getHostname() + ": sending agent register request for agent " + agentIp + "" +
-                        "to driver " + this.driverState.getPathForId(i));
+                LOG.info(this.driverInstance.getDriverState().getHostname() + ": sending agent register request for agent " + agentIp + "" +
+                        "to driver " + this.driverInstance.getDriverState().getPathForId(i));
                 HttpResponse regResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, agentIp,
-                        Driver.getAgentRegisterPath(this.driverState.getPathForId(i), HttpUtils.SPARK_PORT, false), HTTP_REQUEST_RETRIES);
+                        Driver.getAgentRegisterPath(driverState.getPathForId(i), HttpUtils.SPARK_PORT, false), HTTP_REQUEST_RETRIES);
                 if (regResponse == null) {
                     // the assumption is that the new driver will receive the full list of active agents after being restarted
-                    LOG.info("Driver " + this.driverState.getHostname() + "failed to send register request for agent " + agentIp +
-                            "to driver " + this.driverState.getPathForId(i));
+                    LOG.info("Driver " + driverState.getHostname() + "failed to send register request for agent " + agentIp +
+                            "to driver " + driverState.getPathForId(i));
                 }
             }
         }
@@ -80,6 +85,7 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         LOG.info("Driver has requested updates about the state of the cluster.");
         String currentPhaseName = "";
         String yamlConfig = "";
+        DriverState driverState = this.driverInstance.getDriverState();
 
         /* send configuration received to be executed in distributed mode and the phase being executed at this moment,
          * if applicable.
@@ -89,14 +95,14 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
                     new GenerateYamlConfiguration(driverInstance.getConfiguration().getConfigParams(), new HashMap<>());
             yamlConfig = generateYaml.createYamlStringRepresentation();
             if (driverInstance.getDistributedPhaseMonitor().isPhaseExecuting()) {
-                currentPhaseName = this.distributedPhaseMonitor.getPhase().getName();
+                currentPhaseName = this.driverInstance.getDistributedPhaseMonitor().getPhase().getName();
             }
         }
 
         // build information to send to the driver that recently joined the cluster
-        DriverUpdateInfo driverUpdateInfo = new DriverUpdateInfo(this.driverState.getId(),
-                this.driverState.getCurrentState(), this.masterElection.getInvalidCandidates(),
-                this.driverState.getRegisteredAgents(), yamlConfig, currentPhaseName);
+        DriverUpdateInfo driverUpdateInfo = new DriverUpdateInfo(driverState.getId(),
+                driverState.getCurrentState(), this.driverInstance.getMasterElection().getInvalidCandidates(),
+                driverState.getRegisteredAgents(), yamlConfig, currentPhaseName);
 
         ObjectMapper objectMapper = new ObjectMapper();
         String yamlUpdateInfo = objectMapper.writeValueAsString(driverUpdateInfo);
@@ -109,18 +115,18 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
     @Override
     public String processMasterElectionRequest(Request request, Driver driverInstance) {
         int failedDriverId = Integer.parseInt(request.body());
-
+        MasterElection masterElection = this.driverInstance.getMasterElection();
         // check if this news was already processed
-        if (this.masterElection.isCandidateInvalid(failedDriverId)) {
+        if (masterElection.isCandidateInvalid(failedDriverId)) {
             return "";
         }
 
         LOG.info("Driver was informed that the current master (id: " + failedDriverId + ") died");
-        this.masterElection.markCandidateAsInvalid(failedDriverId);
+        masterElection.markCandidateAsInvalid(failedDriverId);
 
         // pick a new leader
-        this.masterElection.electMaster(driverInstance);
-        LOG.info("New master was elected: " + this.driverState.getMasterId());
+        masterElection.electMaster(driverInstance);
+        LOG.info("New master was elected: " + this.driverInstance.getDriverState().getMasterId());
 
         return "";
     }
@@ -128,30 +134,31 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
     @Override
     public String processPhaseCompletionAnnouncement(Request request) {
         String agentIp = request.body();
+        DriverState driverState = this.driverInstance.getDriverState();
 
         LOG.info("Agent " + agentIp + " finished executing the current phase.");
-        this.distributedPhaseMonitor.addAgentWhichCompletedTheCurrentPhase(agentIp);
+        this.driverInstance.getDistributedPhaseMonitor().addAgentWhichCompletedTheCurrentPhase(agentIp);
 
         /* if this is the first driver receiving this type of request, forward it to all the other drivers running in
          * the cluster.
          */
         if (request.queryParams("forward").equals("true")) {
-            for (int i = 0; i < this.driverState.getNrDrivers(); i++) {
+            for (int i = 0; i < driverState.getNrDrivers(); i++) {
                 /* skip current driver and inactive drivers */
-                if (i == this.driverState.getId()) {
+                if (i == driverState.getId()) {
                     continue;
                 }
 
-                LOG.info(this.driverState.getHostname() + ": sending agent announcement for phase completion " +
-                        agentIp + "" + "to driver " + this.driverState.getPathForId(i));
+                LOG.info(driverState.getHostname() + ": sending agent announcement for phase completion " +
+                        agentIp + "" + "to driver " + driverState.getPathForId(i));
                 HttpResponse response = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, agentIp,
-                        Driver.getPhaseFinishedByAgentPath(this.driverState.getPathForId(i), HttpUtils.SPARK_PORT, false),
+                        Driver.getPhaseFinishedByAgentPath(driverState.getPathForId(i), HttpUtils.SPARK_PORT, false),
                         HTTP_REQUEST_RETRIES);
 
                 if (response == null) {
                     // the assumption is that the new driver will receive the full list of active agents after being restarted
-                    LOG.info("Driver " + this.driverState.getHostname() + "failed to send announcement for phase "
-                            + "of agent " + agentIp + "to driver " + this.driverState.getPathForId(i));
+                    LOG.info("Driver " + driverState.getHostname() + "failed to send announcement for phase "
+                            + "of agent " + agentIp + "to driver " + driverState.getPathForId(i));
                 }
 
             }

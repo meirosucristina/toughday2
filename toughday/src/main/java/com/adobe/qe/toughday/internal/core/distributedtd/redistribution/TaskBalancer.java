@@ -226,7 +226,7 @@ public class TaskBalancer {
         distributedPhaseMonitor.resetExecutions();
 
         // mark recently added agents as active agents executing tasks
-        newAgents.forEach(driverState::registerAgent);
+        // newAgents.forEach(driverState::registerAgent);
         newAgents.forEach(distributedPhaseMonitor::registerAgentRunningTD);
         newAgents.forEach(this.recentlyAddedAgents::remove);
         LOG.info("[Redistribution] Finished redistributing the work");
