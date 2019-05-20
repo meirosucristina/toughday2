@@ -74,4 +74,9 @@ public class SlaveRequestProcessor extends AbstractRequestProcessor {
 
         return "";
     }
+
+    @Override
+    public String processHeartbeatRequest(Request request, Driver driverInstance) {
+        throw new IllegalStateException("Slaves should never receive this type of requests.");
+    }
 }

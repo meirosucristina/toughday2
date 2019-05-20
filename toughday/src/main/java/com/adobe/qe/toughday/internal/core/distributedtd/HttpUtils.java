@@ -24,6 +24,7 @@ public class HttpUtils {
     public static final int HTTP_REQUEST_RETRIES = 3;
     public static final String SVC_PORT = "80";
     public static final String SPARK_PORT = "4567";
+    public static final String FORWARD_QUERY_PARAM = "?forward=";
 
     private HttpResponse sendGetRequest(String URI) {
         HttpClient httpClient = HttpClientBuilder.create().build();

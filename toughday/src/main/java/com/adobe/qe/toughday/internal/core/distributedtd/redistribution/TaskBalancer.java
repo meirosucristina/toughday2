@@ -4,7 +4,6 @@ import com.adobe.qe.toughday.internal.core.TestSuite;
 import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.YamlDumpConfiguration;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
-import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.adobe.qe.toughday.internal.core.engine.Phase;
@@ -177,7 +176,7 @@ public class TaskBalancer {
                 LOG.info("Failed to send task to new agent " + newAgentIpAddress + ".");
             }
 
-            if (driverState.getHostname().equals("driver-0.driver.default.svc.cluster.local")) {
+            /*if (driverState.getHostname().equals("driver-0.driver.default.svc.cluster.local")) {
                 LOG.info("KILLING DRIVER FOR TESTING PURPOSE....");
                 try {
                     Thread.sleep(10000);
@@ -186,7 +185,7 @@ public class TaskBalancer {
                 }
 
                 System.exit(-1);
-            }
+            }*/
 
         });
     }
@@ -222,13 +221,16 @@ public class TaskBalancer {
     }
 
     private void after(DistributedPhaseMonitor distributedPhaseMonitor, DriverState driverState,
-                       List<String> newAgents, Configuration configuration) {
+                       List<String> newAgents, List<String> inactiveAgents, Configuration configuration) {
         distributedPhaseMonitor.resetExecutions();
 
         // mark recently added agents as active agents executing tasks
-        // newAgents.forEach(driverState::registerAgent);
+        newAgents.forEach(driverState::registerAgent);
         newAgents.forEach(distributedPhaseMonitor::registerAgentRunningTD);
         newAgents.forEach(this.recentlyAddedAgents::remove);
+
+        // inform all the other drivers about the agents which failed to respond to heartbeat request
+
         LOG.info("[Redistribution] Finished redistributing the work");
 
         if (this.status == RedistributionStatus.RESCHEDULE_REQUIRED) {
@@ -263,7 +265,7 @@ public class TaskBalancer {
             LOG.warn("");
         }
 
-        after(distributedPhaseMonitor, driverState, newAgents, configuration);
+        after(distributedPhaseMonitor, driverState, newAgents, inactiveAgents, configuration);
     }
 
     /**

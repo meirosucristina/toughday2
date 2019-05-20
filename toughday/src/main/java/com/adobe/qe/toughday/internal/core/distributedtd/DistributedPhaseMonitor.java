@@ -40,6 +40,10 @@ public class DistributedPhaseMonitor {
         return this.agentsWhichCompletedCurrentPhase;
     }
 
+    public void setExecutions(Map<String, Map<String, Long>> executions) {
+        this.executions = executions;
+    }
+
     /**
      * Setter for the execution start time of the phase.
      */
@@ -71,12 +75,16 @@ public class DistributedPhaseMonitor {
      * @param agentIdentifier : ip address that identifies the agent inside the cluster
      */
     public void registerAgentRunningTD(String agentIdentifier) {
-        this.agentsRunningTD.add(agentIdentifier);
+        if (!this.agentsRunningTD.contains(agentIdentifier)) {
+            this.agentsRunningTD.add(agentIdentifier);
+        }
 
     }
 
     public void addAgentWhichCompletedTheCurrentPhase(String agentIdentifier) {
-        this.agentsWhichCompletedCurrentPhase.add(agentIdentifier);
+        if (!this.agentsWhichCompletedCurrentPhase.contains(agentIdentifier)) {
+            this.agentsWhichCompletedCurrentPhase.add(agentIdentifier);
+        }
     }
 
     /**
@@ -102,6 +110,9 @@ public class DistributedPhaseMonitor {
             Future<?> waitPhaseCompletion = executorService.submit(() -> {
                 while (this.agentsRunningTD.size() != this.agentsWhichCompletedCurrentPhase.size()) {
                     try {
+                        /*LOG.info("[phase completion] Agents running TD is " + this.agentsRunningTD.toString());
+                        LOG.info("[phase completion] Agents which finished executing the current phase " +
+                                this.agentsWhichCompletedCurrentPhase.toString());*/
                         Thread.sleep(1000);
                     } catch (InterruptedException e) {
                         // this will not cause further problems => it can be ignored

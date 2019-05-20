@@ -62,7 +62,7 @@ public class DriverState {
     public DriverState(String hostname, Configuration driverConfig) {
         this.driverConfig = driverConfig;
         this.hostname = hostname;
-        LOG.info("Hostname is " + this.hostname);
+
         String name_pattern = "driver-[0-9]+\\." + SVC_NAME + "\\." + this.driverConfig.getDistributedConfig().getClusterNamespace() +
                 "\\.svc\\.cluster\\.local";
 
@@ -72,12 +72,9 @@ public class DriverState {
 
         String podName = hostname.substring(0, hostname.indexOf("." + SVC_NAME + "." +
                 this.driverConfig.getDistributedConfig().getClusterNamespace()));
+
         this.id = Integer.parseInt(podName.substring(podName.lastIndexOf("-") + 1));
         this.nrDrivers = Integer.parseInt(System.getenv("NR_DRIVERS"));
-
-        LOG.info("Nr of drivers running in the cluster: " + this.nrDrivers);
-        LOG.info("ID is " + this.id);
-
         this.currentState = State.SLAVE;
     }
 
@@ -121,12 +118,14 @@ public class DriverState {
      * @param agentIdentifier : ipAddress used to uniquely identify the agent inside the cluster.
      */
     public void registerAgent(String agentIdentifier) {
-        this.agents.add(agentIdentifier);
+        if (!this.agents.contains(agentIdentifier)) {
+            this.agents.add(agentIdentifier);
+        }
     }
 
     /**
      * Removes an agent from the list of active agents running in the cluster.
-     * @param agentIdentifier
+     * @param agentIdentifier : ipAddress that uniquely identifies the agent to be removed.
      */
     public void removeAgent(String agentIdentifier) {
         this.agents.remove(agentIdentifier);
@@ -141,7 +140,6 @@ public class DriverState {
 
     /**
      * Getter for the current status of the driver component. (Master or Slave)
-     * @return
      */
     public State getCurrentState() {
         return this.currentState;
@@ -149,7 +147,6 @@ public class DriverState {
 
     /**
      * Setter the current status of the driver component.
-     * @param state
      */
     public void setCurrentState(State state) {
         this.currentState = state;
@@ -206,6 +203,7 @@ public class DriverState {
 
                 previouslyExecutedPhases.add(phase);
             }
+            LOG.info("phases that will be removed " + previouslyExecutedPhases.toString());
             phases.removeAll(previouslyExecutedPhases);
 
             // set current phase to be monitored

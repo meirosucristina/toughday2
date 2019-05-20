@@ -60,4 +60,6 @@ public interface RequestProcessor {
      */
     String processExecutionRequest(Request request, Driver driverInstance) throws Exception;
 
+    String processHeartbeatRequest(Request request, Driver driverInstance);
+
 }

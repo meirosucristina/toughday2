@@ -19,13 +19,10 @@ import org.apache.logging.log4j.Logger;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 
-import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.HTTP_REQUEST_RETRIES;
-import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.URL_PREFIX;
+import static com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils.*;
 import static spark.Spark.*;
 
 /**
@@ -41,6 +38,7 @@ public class Driver {
     private static final String MASTER_ELECTION_PATH = "/masterElection";
     private static final String ASK_FOR_UPDATES_PATH = "/driverUpdates";
     private static final String GET_NR_DRIVERS_PATH = "/getNrDrivers";
+    private static final String HEARTBEAT_PATH = "/heartbeat";
 
     private static final String HOSTNAME = "driver";
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
@@ -71,13 +69,13 @@ public class Driver {
         return this.driverState;
     }
 
+    /**
+     * Getter for master election instance.
+     */
     public MasterElection getMasterElection() {
         return this.masterElection;
     }
 
-    public ScheduledExecutorService getHeartbeatScheduler() {
-        return this.heartbeatScheduler;
-    }
 
     public Driver(Configuration configuration) {
         try {
@@ -94,7 +92,8 @@ public class Driver {
     }
 
     public static String getExecutionPath(String driverIdentifier, String port, boolean forwardReq) {
-        return HttpUtils.URL_PREFIX + driverIdentifier + ":" + port + Driver.EXECUTION_PATH + "?forward=" + forwardReq;
+        return HttpUtils.URL_PREFIX + driverIdentifier + ":" + port + Driver.EXECUTION_PATH +
+                HttpUtils.FORWARD_QUERY_PARAM + forwardReq;
     }
 
     /**
@@ -102,7 +101,8 @@ public class Driver {
      * the driver.
      */
     public static String getPhaseFinishedByAgentPath(String driverIdentifier, String port, boolean forwardReq) {
-        return URL_PREFIX + driverIdentifier + ":" + port + PHASE_FINISHED_BY_AGENT_PATH + "?forward=" + forwardReq;
+        return URL_PREFIX + driverIdentifier + ":" + port + PHASE_FINISHED_BY_AGENT_PATH +
+                HttpUtils.FORWARD_QUERY_PARAM  + forwardReq;
     }
 
     /**
@@ -122,12 +122,20 @@ public class Driver {
         return URL_PREFIX + driverHostname + ":" + port + MASTER_ELECTION_PATH;
     }
 
+    /**
+     * Returns the http URL that should be used by the agents to register themselves after joining the cluster.
+     * @param driverIdentifier : specifies what kind of pods should received this request.
+     * @param port : the port on which the driver is listening for this type of request.
+     * @param forwardReq : true if this request should be forwarded to all the drivers running in the cluster; false
+     *                   otherwise
+     */
     public static String getAgentRegisterPath(String driverIdentifier, String port, boolean forwardReq) {
-        return URL_PREFIX + driverIdentifier + ":" + port + REGISTER_PATH + "?forward=" + forwardReq;
+        return URL_PREFIX + driverIdentifier + ":" + port + REGISTER_PATH + HttpUtils.FORWARD_QUERY_PARAM  + forwardReq;
     }
 
-    public static String getHealthPath(String driverHostName) {
-        return URL_PREFIX + driverHostName + ":4567" + HEALTH_PATH;
+
+    public static String getHeartbeatPath(String driverHostName) {
+        return URL_PREFIX + driverHostName + ":" + HttpUtils.SPARK_PORT + HEARTBEAT_PATH;
     }
 
     /**
@@ -143,6 +151,9 @@ public class Driver {
         return this.executorService;
     }
 
+    /**
+     * Setter for the TD configuration to be executed in distributed mode.
+     */
     public void setConfiguration(Configuration configuration) {
         this.configuration = configuration;
     }
@@ -161,12 +172,16 @@ public class Driver {
         this.driverState.getRegisteredAgents().clear();
     }
 
+    /**
+     * Method used to finish the distributed execution. The agents will be informed that there are no more phases to be
+     * executed and they will stop running.
+     */
     public void finishDistributedExecution() {
+        finishAgents();
+
         this.executorService.shutdownNow();
         // finish tasks
         this.heartbeatScheduler.shutdownNow();
-
-        finishAgents();
     }
 
     /**
@@ -202,12 +217,23 @@ public class Driver {
         }
     }
 
+    /**
+     * Method used for cancelling the periodic task of sending heartbeat messaged to the agents running in the cluster.
+     */
+    public void cancelHeartbeatTask() {
+        this.heartbeatScheduler.shutdownNow();
+    }
+
+    /**
+     * Method use to resume the distributed execution of ToughDay whenever a new master is elected in the cluster.
+     */
     public void resumeExecution() {
         if (this.configuration == null) {
             return;
         }
 
         LOG.info("Resuming execution...");
+
         // wait until current phase is successfully finished
         if (!distributedPhaseMonitor.waitForPhaseCompletion(3)) {
             finishDistributedExecution();
@@ -215,16 +241,26 @@ public class Driver {
         }
 
         LOG.info("Phase " + distributedPhaseMonitor.getPhase().getName() + " finished execution successfully.");
-        configuration.getPhases().remove(0);
+        List<Phase> remainingPhases = new ArrayList<>(configuration.getPhases());
+        remainingPhases.remove(remainingPhases.get(0));
+
+        LOG.info("Phases left to be executed: " + remainingPhases.toString());
+        this.configuration.setPhases(remainingPhases);
 
         // continue executing all the other phases
         executePhases();
     }
 
 
+    /**
+     * Method used for running the phases of the TD configuration received to be executed distributed. This method
+     * should only be called once, when the master receives the query to execute TD. Whenever a new master is elected,
+     * the {@link #resumeExecution()} method should be used.
+     */
     public void executePhases() {
         PhaseSplitter phaseSplitter = new PhaseSplitter();
 
+        LOG.info("[Driver] Executing phases + " + this.configuration.getPhases().toString());
         for (Phase phase : configuration.getPhases()) {
             try {
                 Map<String, Phase> tasks = phaseSplitter.splitPhase(phase, new ArrayList<>(this.driverState.getRegisteredAgents()));
@@ -274,6 +310,8 @@ public class Driver {
             }
         }
 
+        LOG.info("Finishing DISTRIBUTED EXECUTION");
+
         finishDistributedExecution();
     }
 
@@ -308,6 +346,8 @@ public class Driver {
 
         /* expose http endpoint for sending information about the current state of the distributed execution */
         get(ASK_FOR_UPDATES_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processUpdatesRequest(request, this)));
+
+        get(HEARTBEAT_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processHeartbeatRequest(request, this)));
 
         /* expose http endpoint for registering new agents in the cluster */
         post(REGISTER_PATH, (request, response) -> dispatcher.getRequestProcessor(this).processRegisterRequest(request, this));

@@ -7,6 +7,8 @@ import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.gson.Gson;
 import org.apache.http.HttpResponse;
 import spark.Request;
 import spark.Response;
@@ -94,7 +96,7 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         }
 
         // cancel heartbeat task and reschedule it with the new period
-        currentDriver.getHeartbeatScheduler().shutdownNow();
+        currentDriver.cancelHeartbeatTask();
         driverState.getDriverConfig().getDistributedConfig().merge(configuration.getDistributedConfig());
         currentDriver.scheduleHeartbeatTask();
     }
@@ -132,6 +134,13 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         driverInstance.getExecutorService().submit(() -> handleExecutionRequest(driverInstance.getConfiguration(), driverInstance));
 
         return "";
+    }
+
+    @Override
+    public String processHeartbeatRequest(Request request, Driver driverInstance) {
+        // send executions/test to slaves to keep them updated
+        Gson gson = new Gson();
+        return gson.toJson(driverInstance.getDistributedPhaseMonitor().getExecutions());
     }
 
     @Override
