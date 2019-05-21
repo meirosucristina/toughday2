@@ -39,6 +39,7 @@ public class Driver {
     private static final String ASK_FOR_UPDATES_PATH = "/driverUpdates";
     private static final String GET_NR_DRIVERS_PATH = "/getNrDrivers";
     private static final String HEARTBEAT_PATH = "/heartbeat";
+    private static final String AGENT_FAILURE_PATH = "/agentFailure";
 
     private static final String HOSTNAME = "driver";
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
@@ -57,14 +58,23 @@ public class Driver {
         return this.distributedPhaseMonitor;
     }
 
+    /**
+     * Getter for the task balancer instance.
+     */
     public TaskBalancer getTaskBalancer() {
         return this.taskBalancer;
     }
 
+    /**
+     * Getter for the TD configuration which must be executed in distributed mode.
+     */
     public Configuration getConfiguration() {
         return this.configuration;
     }
 
+    /**
+     * Getter for the state of the driver.
+     */
     public DriverState getDriverState() {
         return this.driverState;
     }
@@ -76,7 +86,10 @@ public class Driver {
         return this.masterElection;
     }
 
-
+    /**
+     * Constructor
+     * @param configuration : configuration given when the driver was deployed into the cluster.
+     */
     public Driver(Configuration configuration) {
         try {
             String hostname = InetAddress.getLocalHost().getHostName();
@@ -85,12 +98,19 @@ public class Driver {
             System.exit(-1);
         }
 
-        this.masterElection = new MasterElection(this.driverState.getNrDrivers());
+        this.masterElection = MasterElection.getInstance(this.driverState.getNrDrivers());
         this.masterElection.electMasterWhenDriverJoinsTheCluster(this);
 
         LOG.info("Driver " + this.driverState.getHostname() + " elected as master " + this.driverState.getMasterId());
     }
 
+    /**
+     * Returns the http URL that should be used for triggering the distributed execution in the cluster.
+     * @param driverIdentifier : the identifier of the driver that will received this execution query.
+     * @param port : the port on which the query must be sent.
+     * @param forwardReq : true if the request must be forwarded to all the other drivers running in the cluster; false
+     *                   otherwise.
+     */
     public static String getExecutionPath(String driverIdentifier, String port, boolean forwardReq) {
         return HttpUtils.URL_PREFIX + driverIdentifier + ":" + port + Driver.EXECUTION_PATH +
                 HttpUtils.FORWARD_QUERY_PARAM + forwardReq;
@@ -134,6 +154,11 @@ public class Driver {
     }
 
 
+    /**
+     * Returns the http URL that should be used by the Slaves to periodically check if the current Master is running
+     * properly.
+     * @param driverHostName : hostname that uniquely identifies the driver which should receive the heartbeat message
+     */
     public static String getHeartbeatPath(String driverHostName) {
         return URL_PREFIX + driverHostName + ":" + HttpUtils.SPARK_PORT + HEARTBEAT_PATH;
     }
@@ -144,7 +169,16 @@ public class Driver {
      * @param driverHostName : hostname of the driver component exposing this http endpoint
      */
     public static String getAskForUpdatesPath(String driverHostName) {
-        return URL_PREFIX + driverHostName + ":4567" + ASK_FOR_UPDATES_PATH;
+        return URL_PREFIX + driverHostName + ":" + SPARK_PORT + ASK_FOR_UPDATES_PATH;
+    }
+
+    /**
+     * Returns the http URL that should be used by the current master to announce that a certain agent failed to respond
+     * to heartbeat messages.
+     * @param driverHostName : hostname of the driver component that should receive the http request
+     */
+    public static String getAgentFailurePath(String driverHostName) {
+        return URL_PREFIX + driverHostName + ":" + SPARK_PORT + AGENT_FAILURE_PATH;
     }
 
     public ExecutorService getExecutorService() {
@@ -158,6 +192,10 @@ public class Driver {
         this.configuration = configuration;
     }
 
+    /**
+     * Method used for announcing the agents that the TD configuration was successfully executed and they should stop
+     * their execution.
+     */
     public void finishAgents() {
         this.driverState.getRegisteredAgents().forEach(agentIp -> {
             LOG.info("[Driver] Finishing agent " + agentIp);
@@ -190,8 +228,7 @@ public class Driver {
      */
     public void scheduleHeartbeatTask() {
         // we should periodically send heartbeat messages from driver to all the agents
-        heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this.driverState, this.distributedPhaseMonitor,
-                        this.configuration),
+        heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this),
                 0, this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds(), TimeUnit.SECONDS);
     }
 
@@ -334,7 +371,8 @@ public class Driver {
         /* http endpoint used by the agent installing the sample content to announce if the installation was
          * successful or not. */
         post(SAMPLE_CONTENT_ACK_PATH, ((request, response) ->
-                    dispatcher.getRequestProcessor(this).acknowledgeSampleContentSuccessfulInstallation(request, this, response)));
+                    dispatcher.getRequestProcessor(this)
+                            .acknowledgeSampleContentSuccessfulInstallation(request, this, response)));
 
         /* expose http endpoint to allow agents to announce when they finished executing the current phase */
         post(PHASE_FINISHED_BY_AGENT_PATH, ((request, response) ->
@@ -345,11 +383,17 @@ public class Driver {
                 dispatcher.getRequestProcessor(this).processMasterElectionRequest(request, this)));
 
         /* expose http endpoint for sending information about the current state of the distributed execution */
-        get(ASK_FOR_UPDATES_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processUpdatesRequest(request, this)));
+        get(ASK_FOR_UPDATES_PATH, ((request, response) -> dispatcher.getRequestProcessor(this)
+                .processUpdatesRequest(request, this)));
 
-        get(HEARTBEAT_PATH, ((request, response) -> dispatcher.getRequestProcessor(this).processHeartbeatRequest(request, this)));
+        get(HEARTBEAT_PATH, ((request, response) -> dispatcher.getRequestProcessor(this)
+                .processHeartbeatRequest(request, this)));
+
+        post(AGENT_FAILURE_PATH, ((request, response) -> dispatcher.getRequestProcessor(this)
+                .processAgentFailureAnnouncement(request, this)));
 
         /* expose http endpoint for registering new agents in the cluster */
-        post(REGISTER_PATH, (request, response) -> dispatcher.getRequestProcessor(this).processRegisterRequest(request, this));
+        post(REGISTER_PATH, (request, response) -> dispatcher.getRequestProcessor(this)
+                .processRegisterRequest(request, this));
     }
 }

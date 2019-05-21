@@ -4,10 +4,14 @@ import com.adobe.qe.toughday.api.annotations.labels.Nullable;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpConnectionParams;
+import org.apache.http.params.HttpParams;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import java.io.IOException;
@@ -27,7 +31,10 @@ public class HttpUtils {
     public static final String FORWARD_QUERY_PARAM = "?forward=";
 
     private HttpResponse sendGetRequest(String URI) {
-        HttpClient httpClient = HttpClientBuilder.create().build();
+        RequestConfig config = RequestConfig.custom()
+                .setConnectTimeout(10 * 1000)    // 5 seconds
+                .build();
+        HttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(config).build();
         HttpGet request = new HttpGet(URI);
 
         try {

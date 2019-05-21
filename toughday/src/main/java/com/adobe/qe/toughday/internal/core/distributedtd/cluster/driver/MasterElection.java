@@ -23,15 +23,25 @@ public class MasterElection {
     private int nrDrivers;
     private Queue<Integer> candidates;
     protected static final Logger LOG = LogManager.getLogger(Engine.class);
+    private static MasterElection instance = null;
 
-    /**
-     * Constructor.
-     * @param nrDrivers : number of driver components deployed in the cluster.
-     */
-    public MasterElection(int nrDrivers) {
+    private MasterElection(int nrDrivers) {
         this.nrDrivers = nrDrivers;
         this.candidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed()
                 .collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
+    }
+
+    /**
+     * Returns a Singleton instance of this class. This method is not thread safe and it should not be called from
+     * multiple threads.
+     * @param nrDrivers : number of driver components deployed in the cluster.
+     */
+    public static MasterElection getInstance(int nrDrivers) {
+        if (instance == null) {
+            instance = new MasterElection(nrDrivers);
+        }
+
+        return instance;
     }
 
     /**
@@ -69,6 +79,10 @@ public class MasterElection {
         }
     }
 
+    /**
+     * Resets the list of candidates considered invalid. After this method is called, all the drivers will be considered
+     * eligible to be elected as the new master.
+     */
     public void resetInvalidCandidates() {
         LOG.info("Resetting list of candidates to be considered for master election");
         this.candidates = IntStream.rangeClosed(0, nrDrivers - 1).boxed().collect(Collectors.toCollection(ConcurrentLinkedQueue::new));
@@ -167,8 +181,7 @@ public class MasterElection {
                 LOG.info("New master must redistribute the work between the agents because of idle agents " +
                         idleAgents.toString());
                 idleAgents.forEach(idleAgent ->
-                        driver.getTaskBalancer().scheduleWorkRedistributionProcess(driver.getDistributedPhaseMonitor(),
-                                driver.getDriverState(), driver.getConfiguration(), idleAgent, true));
+                        driver.getTaskBalancer().scheduleWorkRedistributionProcess(driver, idleAgent, true));
             }
 
             // schedule heartbeat task for periodically checking agents
@@ -204,7 +217,6 @@ public class MasterElection {
 
         currentDriver.getDriverState().updateDriverState(updates, currentDriver)
         ;
-        // TODO : treat agents running TD & agents which finished executing the current phase
 
         // set master if updates were received from the current master running in the cluster
         if (updates.getSourceState() == DriverState.State.MASTER) {
@@ -228,7 +240,6 @@ public class MasterElection {
                 .collect(Collectors.toList());
 
         for (String URI : paths) {
-            LOG.info("USED URI " + URI);
             HttpResponse driverResponse = httpUtils.sendHttpRequest(HttpUtils.GET_METHOD, "", URI,
                     HttpUtils.HTTP_REQUEST_RETRIES);
             if (driverResponse != null) {

@@ -79,4 +79,16 @@ public class SlaveRequestProcessor extends AbstractRequestProcessor {
     public String processHeartbeatRequest(Request request, Driver driverInstance) {
         throw new IllegalStateException("Slaves should never receive this type of requests.");
     }
+
+    @Override
+    public String processAgentFailureAnnouncement(Request request, Driver driverInstance) {
+        String agentIdentifier = request.body();
+
+        LOG.info("The driver was announced by the master that agent " + agentIdentifier + " failed to respond" +
+                " to heartbeat request.");
+        this.driverInstance.getDistributedPhaseMonitor().removeAgentFromActiveTDRunners(agentIdentifier);
+        this.driverInstance.getDriverState().removeAgent(agentIdentifier);
+
+        return "";
+    }
 }

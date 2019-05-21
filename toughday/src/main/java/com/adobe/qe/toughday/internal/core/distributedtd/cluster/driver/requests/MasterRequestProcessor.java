@@ -7,7 +7,6 @@ import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverState;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import org.apache.http.HttpResponse;
 import spark.Request;
@@ -116,7 +115,6 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         if (!installed) {
             LOG.error("Failed to install the ToughDay sample content package. Execution will be stopped.");
             driverInstance.finishDistributedExecution();
-            System.exit(-1);
         }
 
         synchronized (this.object) {
@@ -144,6 +142,11 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
     }
 
     @Override
+    public String processAgentFailureAnnouncement(Request request, Driver driverInstance) {
+        throw new IllegalStateException("Master should never receive this type of request.");
+    }
+
+    @Override
     public String processRegisterRequest(Request request, Driver driverInstance) {
         super.processRegisterRequest(request, driverInstance);
         String agentIp = request.body();
@@ -157,8 +160,7 @@ public class MasterRequestProcessor extends AbstractRequestProcessor {
         }
 
         // master must schedule the work redistribution process when a new agent is registering
-        this.driverInstance.getTaskBalancer().scheduleWorkRedistributionProcess(this.driverInstance.getDistributedPhaseMonitor(),
-                driverState, driverInstance.getConfiguration(), agentIp, true);
+        this.driverInstance.getTaskBalancer().scheduleWorkRedistributionProcess(this.driverInstance, agentIp, true);
 
         return "";
     }

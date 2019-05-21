@@ -32,7 +32,7 @@ public class SlaveRequestProcessorTest {
     @Mock Driver mockDriver;
     @Mock DriverState driverStateMock;
     private DistributedPhaseMonitor distributedPhaseMonitor= new DistributedPhaseMonitor();
-    private final MasterElection masterElection = new MasterElection(3);
+    private final MasterElection masterElection = MasterElection.getInstance(3);
     private static ReflectionsContainer reflections = ReflectionsContainer.getInstance();
 
     @Rule
@@ -52,6 +52,8 @@ public class SlaveRequestProcessorTest {
         Mockito.when(driverStateMock.getCurrentState()).thenReturn(DriverState.State.SLAVE);
         Mockito.when(mockDriver.getMasterElection()).thenReturn(this.masterElection);
         Mockito.when(driverStateMock.getId()).thenReturn(1);
+
+        masterElection.resetInvalidCandidates();
     }
 
     @Test

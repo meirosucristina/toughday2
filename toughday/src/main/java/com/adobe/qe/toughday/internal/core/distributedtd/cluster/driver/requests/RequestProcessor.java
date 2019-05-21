@@ -62,4 +62,6 @@ public interface RequestProcessor {
 
     String processHeartbeatRequest(Request request, Driver driverInstance);
 
+    String processAgentFailureAnnouncement(Request request, Driver driverInstance);
+
 }
