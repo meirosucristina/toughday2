@@ -13,13 +13,46 @@ package com.adobe.qe.toughday.metrics;
 
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.Counter;
 
 @Description(desc = "Number of fails.")
 public class Failed extends Metric {
+    private PrometheusMetricFactory<Counter> prometheusMetricFactory = null;
 
     @Override
     public Object getValue(RunMap.TestStatistics testStatistics) {
         return testStatistics.getFailRuns();
+    }
+
+    @Override
+    public PrometheusMetricFactory<Counter> getPrometheusMetricFactory() {
+        if (prometheusMetricFactory == null) {
+            prometheusMetricFactory = new PrometheusMetricFactory<Counter>() {
+                @Override
+                public Counter getPrometheusRepresentation(String phaseName, String testName) {
+                    Counter counter =  Counter.build()
+                            .name(phaseName + "_" + testName + "_" + getName())
+                            .help("Number of failed tests")
+                            .labelNames(phaseName, testName)
+                            .create();
+                    return counter;
+                }
+
+                @Override
+                public void updatePrometheusObject(Object value, Counter promObject, String phaseName, String testName) {
+                    if (promObject == null) {
+                        System.out.println("Null counter given.");
+                        return;
+                    }
+
+                    double newValue = Double.valueOf(value.toString());
+                    promObject.labels(phaseName, testName)
+                            .inc(newValue - promObject.labels(phaseName, testName).get());
+                }
+            };
+        }
+
+        return prometheusMetricFactory;
     }
 
     @Override

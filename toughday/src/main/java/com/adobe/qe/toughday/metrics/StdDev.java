@@ -13,6 +13,7 @@ package com.adobe.qe.toughday.metrics;
 
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 
 @Description(desc = "Standard deviation.")
 public class StdDev extends Metric {
@@ -20,6 +21,11 @@ public class StdDev extends Metric {
     @Override
     public Object getValue(RunMap.TestStatistics testStatistics) {
         return testStatistics.getStandardDeviation();
+    }
+
+    @Override
+    public <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory() {
+        return null;
     }
 
     @Override
@@ -31,4 +37,5 @@ public class StdDev extends Metric {
     public String getUnitOfMeasure() {
         return "ms";
     }
+
 }

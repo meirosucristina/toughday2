@@ -13,6 +13,7 @@ package com.adobe.qe.toughday.metrics;
 
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 
 @Description(desc = "Highest duration of test execution.")
 public class Max extends Metric {
@@ -20,6 +21,11 @@ public class Max extends Metric {
     @Override
     public Object getValue(RunMap.TestStatistics testStatistics) {
         return testStatistics.getMaxDuration();
+    }
+
+    @Override
+    public <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory() {
+        return null;
     }
 
     @Override

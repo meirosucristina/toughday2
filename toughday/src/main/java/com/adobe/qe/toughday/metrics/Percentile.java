@@ -15,6 +15,7 @@ import com.adobe.qe.toughday.api.annotations.ConfigArgGet;
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.annotations.ConfigArgSet;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 
 @Description(desc = "Percentile.")
 public class Percentile extends Metric {
@@ -40,6 +41,11 @@ public class Percentile extends Metric {
     }
 
     @Override
+    public <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory() {
+        return null;
+    }
+
+    @Override
     public String getFormat() {
         return "%d";
     }
@@ -48,4 +54,5 @@ public class Percentile extends Metric {
     public String getUnitOfMeasure() {
         return "ms";
     }
+
 }

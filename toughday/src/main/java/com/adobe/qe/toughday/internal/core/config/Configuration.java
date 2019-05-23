@@ -28,6 +28,8 @@ import com.adobe.qe.toughday.internal.core.distributedtd.cluster.DistributedConf
 import com.adobe.qe.toughday.metrics.Metric;
 import com.adobe.qe.toughday.publishers.CSVPublisher;
 import com.adobe.qe.toughday.publishers.ConsolePublisher;
+import com.adobe.qe.toughday.publishers.prometheus.PrometheusMetricsCollector;
+import com.adobe.qe.toughday.publishers.prometheus.PrometheusPublisher;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -48,6 +50,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.stream.Collectors;
 
 /**
  * An object that has all that configurations parsed and objects instantiated.
@@ -390,6 +393,25 @@ public class Configuration {
             Collection<Metric> defaultMetrics = Metric.defaultMetrics;
             for (Metric metric : defaultMetrics) {
                 metrics.put(metric.getName(), metric);
+            }
+        }
+
+        /* check is prometheus publishers are present */
+        List<Publisher> promPublishers = publishers.values()
+                .stream()
+                .filter(publisher -> publisher.getClass().equals(PrometheusPublisher.class))
+                .collect(Collectors.toList());
+        if (promPublishers.size() > 0) {
+            LOGGER.info("Prometheus publisher detected. Collecting prometheus objects for all metrics of current phase" +
+                    phase.getName());
+            PrometheusMetricsCollector prometheusMetricsCollector = new PrometheusMetricsCollector(new ArrayList<>(metrics.values()), phase);
+            promPublishers.forEach(publisher ->
+                    ((PrometheusPublisher)publisher).setPrometheusMetricsCollector(prometheusMetricsCollector));
+
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
         }
 

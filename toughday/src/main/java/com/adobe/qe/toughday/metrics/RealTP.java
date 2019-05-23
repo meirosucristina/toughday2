@@ -13,6 +13,7 @@ package com.adobe.qe.toughday.metrics;
 
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 
 @Description(desc = "Number of runs divided by elapsed time. Formula: Runs / elapsed execution time.")
 public class RealTP extends Metric {
@@ -20,6 +21,11 @@ public class RealTP extends Metric {
     @Override
     public Object getValue(RunMap.TestStatistics testStatistics) {
         return testStatistics.getRealThroughput();
+    }
+
+    @Override
+    public <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory() {
+        return null;
     }
 
     @Override
@@ -31,4 +37,5 @@ public class RealTP extends Metric {
     public String getUnitOfMeasure() {
         return "rps";
     }
+
 }

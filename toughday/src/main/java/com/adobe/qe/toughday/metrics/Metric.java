@@ -15,6 +15,7 @@ import com.adobe.qe.toughday.api.annotations.ConfigArgGet;
 import com.adobe.qe.toughday.api.annotations.ConfigArgSet;
 import com.adobe.qe.toughday.api.core.MetricResult;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
 import java.util.*;
@@ -63,7 +64,8 @@ public abstract class Metric {
      */
 
     public MetricResult getResult(RunMap.TestStatistics testStatistics) {
-        return new MetricResultImpl<>(this.getName(), this.getValue(testStatistics), this.getFormat(), this.getUnitOfMeasure());
+        return new MetricResultImpl<>(this.getName(), this.getValue(testStatistics), this.getFormat(),
+                this.getUnitOfMeasure());
     }
 
     public abstract Object getValue(RunMap.TestStatistics testStatistics);
@@ -94,6 +96,8 @@ public abstract class Metric {
     public boolean equals(Object o) {
         return o == this || (o instanceof Metric && this.getName().equals(((Metric) o).getName()));
     }
+
+    public abstract <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory();
 
     public abstract String getFormat();
 

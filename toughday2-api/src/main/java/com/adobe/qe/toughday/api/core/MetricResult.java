@@ -11,6 +11,8 @@ governing permissions and limitations under the License.
 */
 package com.adobe.qe.toughday.api.core;
 
+import io.prometheus.client.SimpleCollector;
+
 public interface MetricResult<T> {
 
     /**
@@ -35,6 +37,5 @@ public interface MetricResult<T> {
      * Getter fot the unit of measure for the value of this metric.
      */
     String getUnitOfMeasure();
-
 
 }

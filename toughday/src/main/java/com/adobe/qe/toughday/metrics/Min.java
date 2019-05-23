@@ -13,6 +13,7 @@ package com.adobe.qe.toughday.metrics;
 
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 
 @Description(desc = "Lowest duration of test execution.")
 public class Min extends Metric {
@@ -20,6 +21,11 @@ public class Min extends Metric {
     @Override
     public Object getValue(RunMap.TestStatistics testStatistics) {
         return testStatistics.getMinDuration();
+    }
+
+    @Override
+    public <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory() {
+        return null;
     }
 
     @Override

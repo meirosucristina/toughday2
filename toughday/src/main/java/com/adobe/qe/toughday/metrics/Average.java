@@ -14,6 +14,7 @@ package com.adobe.qe.toughday.metrics;
 
 import com.adobe.qe.toughday.api.annotations.Description;
 import com.adobe.qe.toughday.api.core.RunMap;
+import io.prometheus.client.SimpleCollector;
 
 @Description(desc = "Computed average duration of all test executions. Formula: Sum (request time) / Runs  .")
 public class Average extends Metric {
@@ -21,6 +22,11 @@ public class Average extends Metric {
     @Override
     public Object getValue(RunMap.TestStatistics testStatistics) {
         return testStatistics.getAverageDuration();
+    }
+
+    @Override
+    public <T extends SimpleCollector> PrometheusMetricFactory<T> getPrometheusMetricFactory() {
+        return null;
     }
 
     @Override
