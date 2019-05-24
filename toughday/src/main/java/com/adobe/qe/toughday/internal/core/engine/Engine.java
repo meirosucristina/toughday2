@@ -25,6 +25,8 @@ import com.adobe.qe.toughday.internal.core.config.Configuration;
 import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
 import com.adobe.qe.toughday.metrics.Metric;
+import com.adobe.qe.toughday.publishers.prometheus.PrometheusMetricsOrchestrator;
+import com.adobe.qe.toughday.publishers.prometheus.PrometheusPublisher;
 import com.adobe.qe.toughday.tests.sequential.AEMTestBase;
 import com.adobe.qe.toughday.tests.utils.PackageManagerClient;
 import org.apache.commons.lang3.StringUtils;
@@ -61,6 +63,7 @@ public class Engine {
     private final ReentrantReadWriteLock engineSync = new ReentrantReadWriteLock();
     private List<Phase> phases;
     private Phase currentPhase;
+    private PrometheusMetricsOrchestrator prometheusMetricsOrchestrator = null;
     private final ReadWriteLock currentPhaseLock = new ReentrantReadWriteLock();
     private volatile boolean testsRunning;
 
@@ -314,6 +317,17 @@ public class Engine {
         }
     }
 
+    private boolean isPrometheusPublisherUsed() {
+        for (Phase phase : this.configuration.getPhases()) {
+            if (phase.getPublishers().stream()
+                    .anyMatch(publisher -> publisher.getClass().equals(PrometheusPublisher.class))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void run() throws Exception {
         if(globalArgs.getInstallSampleContent() && !globalArgs.getDryRun()) {
             printConfiguration(configuration, new PrintStream(new LogStream(LOG)));
@@ -333,6 +347,22 @@ public class Engine {
             System.out.println("NOTE: This is just a dry run. No test is actually executed.");
             printConfiguration(this.getConfiguration(), System.out);
             return;
+        }
+
+        // check if there is a Prometheus Publisher that requires converting the metrics intro Prometheus objects
+        if (isPrometheusPublisherUsed()) {
+            LOG.info("Prometheus publisher is required for TD configuration");
+            this.prometheusMetricsOrchestrator =
+                    new PrometheusMetricsOrchestrator(this.configuration.getPhases());
+
+            this.configuration.getPhases()
+                    .forEach(phase -> phase.getPublishers().stream()
+                            .filter(publisher -> publisher.getClass().equals(PrometheusPublisher.class))
+                            .forEach(publisher -> {
+                                PrometheusPublisher promPublisher = (PrometheusPublisher)publisher;
+                                promPublisher.setPrometheusMetricsOrchestrator(prometheusMetricsOrchestrator);
+                            }));
+
         }
 
         // Create the result aggregator thread
@@ -396,6 +426,9 @@ public class Engine {
             try {
                 currentPhaseLock.writeLock().lock();
                 currentPhase = phase;
+                if (this.prometheusMetricsOrchestrator != null) {
+                    this.prometheusMetricsOrchestrator.setCurrentPhase(phase);
+                }
             } finally {
                 currentPhaseLock.writeLock().unlock();
             }
