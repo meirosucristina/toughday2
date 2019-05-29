@@ -34,6 +34,7 @@ import java.util.Map;
 @Description(desc = "Publish statistics to a csv file")
 public class CSVPublisher extends Publisher {
     private static final Logger LOG = LoggerFactory.getLogger(CSVPublisher.class);
+    int total = 0;
 
     /**
      * The default name of the file where aggregated results are published
@@ -157,6 +158,8 @@ public class CSVPublisher extends Publisher {
                 rawResultsWriter = new PrintWriter(new BufferedWriter(new FileWriter(rawFilePath)));
                 rawResultsWriter.println(String.format(RAW_FORMAT, RAW_HEADER));
             }
+            this.total += testResults.size();
+            LOG.info("TOTAL " + this.total);
 
             for (TestResult testResult : testResults) {
                 Object data = testResult.getData();

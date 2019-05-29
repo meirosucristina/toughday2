@@ -102,6 +102,10 @@ public class MasterHeartbeatTask implements Runnable {
                 Driver.getHeartbeatPath(driverState.getPathForId(driverState.getMasterId())),
                 HttpUtils.HTTP_REQUEST_RETRIES);
 
+        if (driver.getConfiguration() != null) {
+            driver.getConfiguration().nrMessagesSentToMaster += 1;
+        }
+
         if (driverResponse != null) {
             this.driver.getDriverState().getMasterIdLock().readLock().unlock();
 

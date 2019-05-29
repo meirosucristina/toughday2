@@ -199,6 +199,10 @@ public class TaskBalancer {
         sendInstructionsToExistingAgents(phases, distributedPhaseMonitor.getAgentsRunningTD());
         sendExecutionRequestsToNewAgents(recentlyAddedAgents, phases, driverInstance.getConfiguration(), driverState);
 
+        if (driverInstance.getConfiguration() != null) {
+            driverInstance.getConfiguration().nrRedistributionRequests += distributedPhaseMonitor.getAgentsRunningTD().size();
+            driverInstance.getConfiguration().nrRedistributionRequests += recentlyAddedAgents.size();
+        }
     }
 
     private void excludeInactiveAgents(List<String> agentsToBeExcluded, Driver driverInstance) {

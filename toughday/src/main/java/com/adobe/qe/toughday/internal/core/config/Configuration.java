@@ -78,6 +78,10 @@ public class Configuration {
     private Map<String, Feeder> feeders = new LinkedHashMap<>();
     private Map<String, Object> objects = new HashMap<>();
 
+    public long nrMessagesSentToAgents = 0;
+    public long nrMessagesSentToMaster = 0;
+    public long nrRedistributionRequests = 0;
+
     public Configuration(String yamlConfig)
             throws InvocationTargetException, NoSuchMethodException, InstantiationException, IOException, IllegalAccessException {
         ConfigParams configParams = new YamlParser().parse(yamlConfig);

@@ -1,8 +1,10 @@
 package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver;
 
+import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.Agent;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
+import com.adobe.qe.toughday.publishers.InfluxDbPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpResponse;
 import org.apache.http.util.EntityUtils;
@@ -12,6 +14,9 @@ import org.apache.logging.log4j.Logger;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -162,6 +167,24 @@ public class MasterElection {
     private void after(Driver driver) {
         // cancel heartbeat task for the diver elected as the new master
         driver.getDriverState().getMasterIdLock().readLock().lock();
+
+        if (driver.getConfiguration() != null) {
+            driver.getConfiguration().getPhases().get(0).getPublishers().stream()
+                    .filter(publisher -> publisher.getClass().equals(InfluxDbPublisher.class))
+                    .forEach(publisher -> {
+                        if (driver.getDriverState().getNrDrivers() > 1) {
+                            Engine engine = new Engine(driver.getConfiguration());
+                            InfluxDbPublisher pub = (InfluxDbPublisher)publisher;
+                            pub.setEngine(engine);
+                            pub.printDriverData = true;
+                            pub.driverId = "driver-" + driver.getDriverState().getId();
+                            ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(1);
+                            LOG.info("[MASTER ELECTION] SCHEDULING PUBLISHER FOR EXPOSING DRIVER DATA");
+                            scheduledExecutorService.scheduleAtFixedRate(() -> publisher.publishRaw(new ArrayList<>()),
+                                    0, GlobalArgs.parseDurationToSeconds("1s"), TimeUnit.SECONDS);
+                        }
+                    });
+        }
 
         // running as master
         if (driver.getDriverState().getMasterId() == driver.getDriverState().getId()) {

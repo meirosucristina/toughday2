@@ -55,7 +55,12 @@ public class HeartbeatTask implements Runnable {
     public void run() {
         List<String> activeAgents = new ArrayList<>(this.driverInstance.getDriverState().getRegisteredAgents());
         // remove agents which previously failed to respond to heartbeat request
+        LOG.info("Removing inactive agents " + this.taskBalancer.getInactiveAgents().toString());
         this.taskBalancer.getInactiveAgents().forEach(activeAgents::remove);
+
+        if (driverInstance.getConfiguration() != null) {
+            driverInstance.getConfiguration().nrMessagesSentToAgents += activeAgents.size();
+        }
 
         for (String agentIp : activeAgents) {
             String URI = Agent.getHeartbeatPath(agentIp);

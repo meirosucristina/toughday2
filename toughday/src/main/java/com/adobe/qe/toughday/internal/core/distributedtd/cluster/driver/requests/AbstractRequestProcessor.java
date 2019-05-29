@@ -1,6 +1,7 @@
 package com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.requests;
 
 import com.adobe.qe.toughday.internal.core.config.Configuration;
+import com.adobe.qe.toughday.internal.core.config.GlobalArgs;
 import com.adobe.qe.toughday.internal.core.config.parsers.yaml.GenerateYamlConfiguration;
 import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
@@ -8,6 +9,7 @@ import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverSt
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.DriverUpdateInfo;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.MasterElection;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
+import com.adobe.qe.toughday.publishers.InfluxDbPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpResponse;
@@ -15,9 +17,14 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import spark.Request;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -177,7 +184,8 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
         LOG.info(yamlConfiguration);
 
         // save TD configuration which must be executed in distributed mode
-        driverInstance.setConfiguration(new Configuration(yamlConfiguration));
+        Configuration configuration = new Configuration(yamlConfiguration);
+        driverInstance.setConfiguration(configuration);
 
         // send TD configuration to all the other drivers running in the cluster
         if (request.queryParams("forward").equals("true")) {
@@ -194,6 +202,22 @@ public abstract class AbstractRequestProcessor implements RequestProcessor {
                 }
             });
         }
+
+        configuration.getPhases().get(0).getPublishers().stream()
+            .filter(publisher -> publisher.getClass().equals(InfluxDbPublisher.class))
+            .forEach(publisher -> {
+                if (driverInstance.getDriverState().getNrDrivers() > 1) {
+                    Engine engine = new Engine(configuration);
+                    InfluxDbPublisher pub = (InfluxDbPublisher)publisher;
+                    pub.setEngine(engine);
+                    pub.printDriverData = true;
+                    pub.driverId = "driver-" + driverInstance.getDriverState().getId();
+                    ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(1);
+                    LOG.info("SCHEDULING PUBLISHER FOR EXPOSING DRIVER DATA");
+                    scheduledExecutorService.scheduleAtFixedRate(() -> publisher.publishRaw(new ArrayList<>()),
+                            0, GlobalArgs.parseDurationToSeconds("1s"), TimeUnit.SECONDS);
+                }
+            });
 
         return "";
     }

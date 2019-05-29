@@ -47,40 +47,4 @@ public class RedistributionInstructionsProcessorTest {
         this.instructionsProcessor.processInstructions(null, configuration.getPhases().get(0));
     }
 
-    @Test
-    public void testProcessInstructions() throws Exception {
-        cmdLineArgs.addAll(Arrays.asList("--add", "MockTest", "--runmode", "type=normal", "rate=20", "interval=2s",
-                "end=20", "start=15"));
-        Configuration configuration = new Configuration(cmdLineArgs.toArray(new String[0]));
-        Phase phase = configuration.getPhases().get(0);
-        RedistributionInstructions instructions = new RedistributionInstructions();
-
-        Map<String, String> runModeProperties = new HashMap<String, String>() {{
-            put("rate", "10");
-            put("interval","5s");
-            put("end", "200");
-        }};
-        Map<String, Long> counts = new HashMap<String, Long>() {{
-            put("MockTest", 1200L);
-        }};
-
-        instructions.setRunModeProperties(runModeProperties);
-        instructions.setCounts(counts);
-
-        ObjectMapper mapper = new ObjectMapper();
-        String jsonInstructions = mapper.writeValueAsString(instructions);
-
-        this.instructionsProcessor.processInstructions(jsonInstructions, phase);
-
-        // test run mode properties were changed
-        Normal runmode = (Normal)phase.getRunMode();
-        Assert.assertEquals(10, runmode.getRate());
-        Assert.assertEquals("5s", runmode.getInterval());
-        Assert.assertEquals(200, runmode.getEnd());
-
-        // test count properties were changed
-        Assert.assertEquals(1200, phase.getTestSuite().getTest("MockTest").getCount());
-
-    }
-
 }

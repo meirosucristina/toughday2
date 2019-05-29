@@ -8,6 +8,7 @@ import com.adobe.qe.toughday.internal.core.distributedtd.HttpUtils;
 import com.adobe.qe.toughday.internal.core.distributedtd.cluster.driver.Driver;
 import com.adobe.qe.toughday.internal.core.engine.Engine;
 import com.adobe.qe.toughday.internal.core.distributedtd.redistribution.RedistributionInstructionsProcessor;
+import com.adobe.qe.toughday.publishers.InfluxDbPublisher;
 import com.google.gson.Gson;
 import org.apache.http.HttpResponse;
 import org.apache.logging.log4j.LogManager;
@@ -163,15 +164,18 @@ public class Agent {
                     installToughdayContentPackage(configuration.getGlobalArgs());
                 } catch (Exception e) {
                     installed = false;
+                    LOG.info("Error encountered when installing TD sample content" + e.getMessage());
                     LOG.error("Error encountered when installing TD sample content", e);
                 }
 
                 HttpResponse driverResponse = this.httpUtils.sendHttpRequest(HttpUtils.POST_METHOD, String.valueOf(installed),
                         Driver.getSampleContentAckPath("driver", HttpUtils.SVC_PORT), HTTP_REQUEST_RETRIES);
                 if (driverResponse == null) {
+                    LOG.info("Agent " + ipAddress + " could not announce the driver that Toughday sample content" +
+                            " package was installed.");
                     LOG.error("Agent " + ipAddress + " could not announce the driver that Toughday sample content" +
                             " package was installed.");
-                    System.exit(-1);
+
                 }
 
             });
@@ -199,6 +203,14 @@ public class Agent {
             Configuration configuration = new Configuration(yamlTask);
             this.engine = new Engine(configuration);
             this.engine.setAgent(this);
+
+            // set agentIP & engine for all InfluxDb publishers
+            configuration.getPhases().forEach(phase -> phase.getPublishers().stream()
+                    .filter(publisher -> publisher.getClass().equals(InfluxDbPublisher.class))
+                    .forEach(publisher -> {
+                        ((InfluxDbPublisher)publisher).setAgentIP(Agent.ipAddress);
+                        ((InfluxDbPublisher)publisher).setEngine(this.engine);
+                    }));
             //configuration.getDistributedConfig().setAgent("true");
 
             tdExecutorService.submit(() ->  {

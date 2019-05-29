@@ -227,9 +227,13 @@ public class Driver {
      * cluster to be executed at every 'heartbeatInterval' seconds.
      */
     public void scheduleHeartbeatTask() {
-        // we should periodically send heartbeat messages from driver to all the agents
-        heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this),
-                0, this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds(), TimeUnit.SECONDS);
+        try {
+            // we should periodically send heartbeat messages from driver to all the agents
+            heartbeatScheduler.scheduleAtFixedRate(new HeartbeatTask(this),
+                    0, this.driverState.getDriverConfig().getDistributedConfig().getHeartbeatIntervalInSeconds(), TimeUnit.SECONDS);
+        } catch (Exception e) {
+            LOG.info("FAILED TO SCHEDULE HEARTBEAT TASK " + e.getMessage());
+        }
     }
 
     /**
@@ -316,6 +320,7 @@ public class Driver {
 
                     if (response != null) {
                         this.distributedPhaseMonitor.registerAgentRunningTD(agentIp);
+                        LOG.info("TASK: \n" + yamlTask);
                         LOG.info("Task was submitted to agent " + agentIp);
                     } else {
                         /* the assumption is that the agent is no longer active in the cluster and he will fail to respond
